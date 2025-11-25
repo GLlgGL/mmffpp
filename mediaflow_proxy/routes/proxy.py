@@ -631,10 +631,7 @@ async def proxy_stream_endpoint(
     
     if "range" not in proxy_headers.request:
         proxy_headers.request["range"] = "bytes=0-"
-    if "nan" in content_range.casefold():
-        # Handle invalid range requests "bytes=NaN-NaN"
-        raise HTTPException(status_code=416, detail="Invalid Range Header")
-    proxy_headers.request.update({"range": content_range})
+    
     if filename:
         # If a filename is provided, set it in the headers using RFC 6266 format
         try:
