@@ -14,7 +14,9 @@ class TurboVidPlayExtractor(BaseExtractor):
         "turbovidhls.com",
     ]
 
-    async def extract(self, url: str, **kwargs) -> Dict[str, Any]:
+    mediaflow_endpoint = "hls_manifest_proxy"
+
+    async def extract(self, url: str, **kwargs):
         #
         # 1. Load embed
         #
@@ -37,46 +39,30 @@ class TurboVidPlayExtractor(BaseExtractor):
             media_url = response.url.origin + media_url
 
         #
-        # 3. Fetch the intermediate playlist (/data3/...uuid.m3u8)
+        # 3. Fetch the intermediate playlist
         #
         data_resp = await self._make_request(media_url, headers={"Referer": url})
         playlist = data_resp.text
 
         #
-        # 4. Extract the REAL playlist URL
+        # 4. Extract real m3u8 URL
         #
         m2 = re.search(r'https?://[^\'"\s]+\.m3u8', playlist)
         if not m2:
-            raise ExtractorError("TurboViPlay: Unable to extract real playlist URL")
+            raise ExtractorError("TurboViPlay: Unable to extract playlist URL")
 
         real_m3u8 = m2.group(0)
 
         #
-        # 5. Download real playlist to check type
-        #
-        final_resp = await self._make_request(real_m3u8, headers={"Referer": url})
-        final_pl = final_resp.text
-
-        # Detect if this is a media playlist (has #EXTINF segments)
-        is_media_playlist = "#EXTINF" in final_pl
-
-        #
-        # 6. Set referer for final requests
+        # 5. Final headers
         #
         self.base_headers["referer"] = url
 
         #
-        # 7. Correct endpoint depending on playlist type
-        #
-        mediaflow_endpoint = (
-            "hls_playlist_proxy" if is_media_playlist else "hls_manifest_proxy"
-        )
-
-        #
-        # 8. Return final master/media playlist URL
+        # 6. Always return master proxy (your MediaFlow only supports this)
         #
         return {
             "destination_url": real_m3u8,
             "request_headers": self.base_headers,
-            "mediaflow_endpoint": mediaflow_endpoint,
+            "mediaflow_endpoint": "hls_manifest_proxy",
         }
