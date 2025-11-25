@@ -14,8 +14,6 @@ class TurboVidPlayExtractor(BaseExtractor):
         "turbovidhls.com",
     ]
 
-    mediaflow_endpoint = "hls_manifest_proxy"
-
     async def extract(self, url: str, **kwargs) -> Dict[str, Any]:
         #
         # 1. Load embed
@@ -24,7 +22,7 @@ class TurboVidPlayExtractor(BaseExtractor):
         html = response.text
 
         #
-        # 2. Extract "urlPlay" or "data-hash"
+        # 2. Extract urlPlay or data-hash
         #
         m = re.search(r'(?:urlPlay|data-hash)\s*=\s*[\'"]([^\'"]+)', html)
         if not m:
@@ -39,35 +37,46 @@ class TurboVidPlayExtractor(BaseExtractor):
             media_url = response.url.origin + media_url
 
         #
-        # 3. Fetch the intermediate /data/ playlist
+        # 3. Fetch the intermediate playlist (/data3/...uuid.m3u8)
         #
         data_resp = await self._make_request(media_url, headers={"Referer": url})
         playlist = data_resp.text
 
         #
-        # 4. Extract REAL master playlist from inside /data/
+        # 4. Extract the REAL playlist URL
         #
-        # Examples inside:
-        # https://g254.turbosplayer.com/file/<uuid>/master.m3u8
-        #
-        real_m3u8 = None
-        m2 = re.search(r'https://[^\'"\s]+/master\.m3u8', playlist)
-        if m2:
-            real_m3u8 = m2.group(0)
+        m2 = re.search(r'https?://[^\'"\s]+\.m3u8', playlist)
+        if not m2:
+            raise ExtractorError("TurboViPlay: Unable to extract real playlist URL")
 
-        if not real_m3u8:
-            raise ExtractorError("TurboViPlay: Unable to extract real master playlist")
+        real_m3u8 = m2.group(0)
 
         #
-        # 5. Set referer for final request
+        # 5. Download real playlist to check type
+        #
+        final_resp = await self._make_request(real_m3u8, headers={"Referer": url})
+        final_pl = final_resp.text
+
+        # Detect if this is a media playlist (has #EXTINF segments)
+        is_media_playlist = "#EXTINF" in final_pl
+
+        #
+        # 6. Set referer for final requests
         #
         self.base_headers["referer"] = url
 
         #
-        # 6. Output final master URL → MediaFlow will clean PNG headers
+        # 7. Correct endpoint depending on playlist type
+        #
+        mediaflow_endpoint = (
+            "hls_playlist_proxy" if is_media_playlist else "hls_manifest_proxy"
+        )
+
+        #
+        # 8. Return final master/media playlist URL
         #
         return {
             "destination_url": real_m3u8,
             "request_headers": self.base_headers,
-            "mediaflow_endpoint": self.mediaflow_endpoint,
+            "mediaflow_endpoint": mediaflow_endpoint,
         }
