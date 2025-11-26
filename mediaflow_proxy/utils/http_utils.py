@@ -174,15 +174,15 @@ class Streamer:
 
                  async for chunk in self.response.aiter_bytes():
                     fixed = strip_png(chunk)
-                        if not fixed:
-                            continue
+                    if not fixed:
+                        continue
 
-                        yield fixed
-                        self.bytes_transferred += len(fixed)
-                        self.progress_bar.update(len(fixed))
+                    yield fixed
+                    self.bytes_transferred += len(fixed)
+                    self.progress_bar.update(len(fixed))
 
             else:
-                async for chunk in self.response.aiter_bytes():
+                 async for chunk in self.response.aiter_bytes():
                     fixed = strip_png(chunk)
                     if not fixed:
                         continue
