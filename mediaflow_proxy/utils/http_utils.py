@@ -140,7 +140,7 @@ class Streamer:
         IEND = b"\x49\x45\x4E\x44\xAE\x42\x60\x82"
 
         def strip_png(chunk: bytes) -> bytes:
-            """Remove PNG junk from segments."""
+            """Remove PNG junk from TurboVid/StreamWish segments."""
             if not chunk.startswith(FAKE_PNG_HEADER):
                 return chunk
 
@@ -158,37 +158,39 @@ class Streamer:
 
             return chunk[pos:]
 
+        try:
             self.parse_content_range()
 
             if settings.enable_streaming_progress:
                 with tqdm_asyncio(
-                total=self.total_size,
-                initial=self.start_byte,
-                unit="B",
-                unit_scale=True,
-                unit_divisor=1024,
-                desc="Streaming",
-                ncols=100,
-                mininterval=1,
+                    total=self.total_size,
+                    initial=self.start_byte,
+                    unit="B",
+                    unit_scale=True,
+                    unit_divisor=1024,
+                    desc="Streaming",
+                    ncols=100,
+                    mininterval=1,
                 ) as self.progress_bar:
 
-            async for chunk in self.response.aiter_bytes():
-                fixed = strip_png(chunk)
-                if not fixed:
-                    continue
+                    async for chunk in self.response.aiter_bytes():
+                        fixed = strip_png(chunk)
 
-                    yield fixed
-                    self.bytes_transferred += len(fixed)
-                    self.progress_bar.update(len(fixed))
+                        yield fixed
+                        self.bytes_transferred += len(fixed)
+                        self.progress_bar.update(len(fixed))
 
             else:
                 async for chunk in self.response.aiter_bytes():
                     fixed = strip_png(chunk)
-                    if not fixed:
-                        continue
 
                     yield fixed
                     self.bytes_transferred += len(fixed)
+
+        except Exception:
+            raise
+
+            
     @staticmethod
     def format_bytes(size) -> str:
         power = 2**10
