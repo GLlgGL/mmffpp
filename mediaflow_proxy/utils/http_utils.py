@@ -133,35 +133,59 @@ class Streamer:
             raise RuntimeError(f"Error creating streaming response: {e}")
 
     async def stream_content(self) -> typing.AsyncGenerator[bytes, None]:
-    if not self.response:
-        raise RuntimeError("No response available for streaming")
+        if not self.response:
+            raise RuntimeError("No response available for streaming")
 
     # ---- StreamWish / FileMoon fake PNG header ----
-    FAKE_PNG_HEADER = b"\x89PNG\r\n\x1a\n"
-    IEND = b"\x49\x45\x4E\x44\xAE\x42\x60\x82"
+        FAKE_PNG_HEADER = b"\x89PNG\r\n\x1a\n"
+        IEND = b"\x49\x45\x4E\x44\xAE\x42\x60\x82"
 
-    first_chunk = True  # <-- VERY IMPORTANT
+        first_chunk = True  # <-- VERY IMPORTANT
 
-    try:
-        self.parse_content_range()
+        try:
+            self.parse_content_range()
 
-        if settings.enable_streaming_progress:
-            with tqdm_asyncio(
-                total=self.total_size,
-                initial=self.start_byte,
-                unit="B",
-                unit_scale=True,
-                unit_divisor=1024,
-                desc="Streaming",
-                ncols=100,
-                mininterval=1,
-            ) as self.progress_bar:
+            if settings.enable_streaming_progress:
+                with tqdm_asyncio(
+                    total=self.total_size,
+                    initial=self.start_byte,
+                    unit="B",
+                    unit_scale=True,
+                    unit_divisor=1024,
+                    desc="Streaming",
+                    ncols=100,
+                    mininterval=1,
+                ) as self.progress_bar:
 
-                async for chunk in self.response.aiter_bytes():
+                    async for chunk in self.response.aiter_bytes():
 
                     # ---------------------------------------------------
                     # Strip fake PNG header ONLY from FIRST chunk
                     # ---------------------------------------------------
+                        if first_chunk:
+                            first_chunk = False
+
+                            if chunk.startswith(FAKE_PNG_HEADER):
+                                end = chunk.find(IEND)
+                                if end != -1:
+                                    pos = end + len(IEND)
+
+                                # skip padding bytes
+                                    while pos < len(chunk) and chunk[pos] in (0x00, 0xFF):
+                                        pos += 1
+
+                                    chunk = chunk[pos:]
+
+                        yield chunk
+                        self.bytes_transferred += len(chunk)
+                        self.progress_bar.update(len(chunk))
+
+            else:
+                async for chunk in self.response.aiter_bytes():
+
+                # ---------------------------------------------------
+                # Strip fake PNG header ONLY from FIRST chunk
+                # ---------------------------------------------------
                     if first_chunk:
                         first_chunk = False
 
@@ -170,7 +194,7 @@ class Streamer:
                             if end != -1:
                                 pos = end + len(IEND)
 
-                                # skip padding bytes
+                            # skip padding bytes
                                 while pos < len(chunk) and chunk[pos] in (0x00, 0xFF):
                                     pos += 1
 
@@ -178,33 +202,9 @@ class Streamer:
 
                     yield chunk
                     self.bytes_transferred += len(chunk)
-                    self.progress_bar.update(len(chunk))
 
-        else:
-            async for chunk in self.response.aiter_bytes():
-
-                # ---------------------------------------------------
-                # Strip fake PNG header ONLY from FIRST chunk
-                # ---------------------------------------------------
-                if first_chunk:
-                    first_chunk = False
-
-                    if chunk.startswith(FAKE_PNG_HEADER):
-                        end = chunk.find(IEND)
-                        if end != -1:
-                            pos = end + len(IEND)
-
-                            # skip padding bytes
-                            while pos < len(chunk) and chunk[pos] in (0x00, 0xFF):
-                                pos += 1
-
-                            chunk = chunk[pos:]
-
-                yield chunk
-                self.bytes_transferred += len(chunk)
-
-    except Exception:
-        raise
+        except Exception:
+            raise
 
             
     @staticmethod
