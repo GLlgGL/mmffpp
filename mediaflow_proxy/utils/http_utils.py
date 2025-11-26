@@ -172,8 +172,8 @@ class Streamer:
                     mininterval=1,
                 ) as self.progress_bar:
 
-                    async for chunk in self.response.aiter_bytes():
-                        fixed = strip_png(chunk)
+                async for chunk in self.response.aiter_bytes():
+                    fixed = strip_png(chunk)
                         if not fixed:
                             continue
 
