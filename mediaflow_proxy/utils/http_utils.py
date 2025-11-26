@@ -161,15 +161,15 @@ class Streamer:
             self.parse_content_range()
 
             if settings.enable_streaming_progress:
-                with tqdm_asyncio(
-                    total=self.total_size,
-                    initial=self.start_byte,
-                    unit="B",
-                    unit_scale=True,
-                    unit_divisor=1024,
-                    desc="Streaming",
-                    ncols=100,
-                    mininterval=1,
+               with tqdm_asyncio(
+                total=self.total_size,
+                initial=self.start_byte,
+                unit="B",
+                unit_scale=True,
+                unit_divisor=1024,
+                desc="Streaming",
+                ncols=100,
+                mininterval=1,
                 ) as self.progress_bar:
 
     async for chunk in self.response.aiter_bytes():
