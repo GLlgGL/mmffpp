@@ -6,7 +6,6 @@ from mediaflow_proxy.extractors.base import BaseExtractor, ExtractorError
 
 
 class VidozaExtractor(BaseExtractor):
-    def __init__(self, *args, **kwargs):
         super().__init__(request_headers)
         self.mediaflow_endpoint = "proxy_stream_endpoint"
 
