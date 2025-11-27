@@ -147,14 +147,6 @@ async def handle_stream_request(
     Handle general stream requests.
 
     This function processes both HEAD and GET requests for video streams.
-
-    Args:
-        method (str): The HTTP method (e.g., 'GET' or 'HEAD').
-        video_url (str): The URL of the video to stream.
-        proxy_headers (ProxyRequestHeaders): Headers to be used in the proxy request.
-
-    Returns:
-        Union[Response, EnhancedStreamingResponse]: Either a HEAD response with headers or a streaming response.
     """
     client, streamer = await setup_client_and_streamer()
 
@@ -167,27 +159,47 @@ async def handle_stream_request(
                 resolved_data = await vavoo_extractor.extract(video_url)
                 resolved_url = resolved_data["destination_url"]
                 logger.info(f"Auto-resolved Vavoo URL: {video_url} -> {resolved_url}")
-                # Update video_url with resolved URL
                 video_url = resolved_url
             except Exception as e:
                 logger.warning(f"Failed to auto-resolve Vavoo URL: {e}")
-                # Continue with original URL if resolution fails
 
         await streamer.create_streaming_response(video_url, proxy_headers.request)
         response_headers = prepare_response_headers(streamer.response.headers, proxy_headers.response)
 
+        # -------------------------------------------------------------
+        # 🔥 FIX FOR STREMIO — REQUIRED HEADERS FOR MP4 SEEKING & PLAYBACK
+        # -------------------------------------------------------------
+        upstream = streamer.response.headers
+
+        # Preserve real file size
+        if "content-length" in upstream:
+            response_headers["content-length"] = upstream["content-length"]
+
+        # Stremio requires Accept-Ranges to enable seeking
+        response_headers.setdefault("accept-ranges", "bytes")
+
+        # Ensure correct content-type (Stremio rejects application/octet-stream)
+        if "content-type" not in response_headers:
+            # If upstream is mp4, force mp4
+            if "mp4" in upstream.get("content-type", "").lower():
+                response_headers["content-type"] = "video/mp4"
+        else:
+            # Fix cases where origin returns generic type
+            if "octet-stream" in response_headers["content-type"].lower():
+                response_headers["content-type"] = "video/mp4"
+        # -------------------------------------------------------------
+
         if method == "HEAD":
-            # For HEAD requests, just return the headers without streaming content
             await streamer.close()
             return Response(headers=response_headers, status_code=streamer.response.status_code)
-        else:
-            # For GET requests, return the streaming response
-            return EnhancedStreamingResponse(
-                streamer.stream_content(),
-                headers=response_headers,
-                status_code=streamer.response.status_code,
-                background=BackgroundTask(streamer.close),
-            )
+
+        return EnhancedStreamingResponse(
+            streamer.stream_content(),
+            headers=response_headers,
+            status_code=streamer.response.status_code,
+            background=BackgroundTask(streamer.close),
+        )
+
     except Exception as e:
         await streamer.close()
         return handle_exceptions(e)
