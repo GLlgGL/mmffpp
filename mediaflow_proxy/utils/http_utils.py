@@ -110,20 +110,6 @@ class Streamer:
             headers (dict): The headers to include in the request.
 
         """
-
-
-
-        # ---------------------------------------------
-# PASSTHROUGH MODE (Fix 509 / anti-hammer)
-# ---------------------------------------------
-# Remove Range/slicing and force full linear stream
-        if "range" in headers:
-            del headers["range"]
-        if "if-range" in headers:
-            del headers["if-range"]
-
-        headers["range"] = "bytes=0-"     # always single upstream request
-
         try:
             request = self.client.build_request("GET", url, headers=headers)
             self.response = await self.client.send(request, stream=True, follow_redirects=True)
