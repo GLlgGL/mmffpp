@@ -24,11 +24,10 @@ class FileMoonExtractor(BaseExtractor):
 
         final_url = await eval_solver(self, iframe_url, headers, patterns)
 
-        test_resp = await self._make_request(final_url, headers=headers, method="HEAD")
-
+        test_resp = await self._make_request(final_url, headers=headers)
         if test_resp.status_code == 404:
-            # This tells MediaFlow that the stream is not usable
             raise ExtractorError("Stream not found (404)")
+
 
         self.base_headers["referer"] = url
         return {
