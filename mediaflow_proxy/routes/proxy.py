@@ -28,6 +28,7 @@ from mediaflow_proxy.utils.http_utils import (
     get_proxy_headers,
     ProxyRequestHeaders,
     create_httpx_client,
+    download_file_with_retry,
 )
 from mediaflow_proxy.utils.base64_utils import process_potential_base64_url
 
@@ -39,6 +40,9 @@ _dlhd_cache_duration = 600  # 10 minutes in seconds
 
 _sportsonline_extraction_cache = {}
 _sportsonline_cache_duration = 600  # 10 minutes in seconds
+
+_vdo_prebuffer_cache = {}
+_vdo_cache_duration = 900  # 15 minutes in seconds
 
 
 def sanitize_url(url: str) -> str:
@@ -276,6 +280,36 @@ async def _check_and_extract_sportsonline_stream(
     except (ExtractorError, DownloadError, Exception) as e:
         logger.error(f"Sportsonline extraction failed: {str(e)}")
         raise HTTPException(status_code=400, detail=f"Sportsonline extraction failed: {str(e)}")
+
+
+async def _prebuffer_vidoza_mp4(destination: str, headers: dict) -> bytes:
+    """
+    Download and cache full Vidoza/Videzz MP4 to avoid 509 errors.
+    """
+    logger = logging.getLogger(__name__)
+    now = time.time()
+
+    # Cache hit
+    cache = _vdo_prebuffer_cache.get(destination)
+    if cache and (now - cache["timestamp"] < _vdo_cache_duration):
+        logger.info(f"Vidoza prebuffer cache HIT for {destination}")
+        return cache["content"]
+
+    # Prepare headers for origin request
+    headers = headers.copy()
+    headers.pop("range", None)
+    headers.pop("if-range", None)
+
+    logger.info(f"Vidoza prebuffer cache MISS for {destination}, downloading full MP4...")
+    content = await download_file_with_retry(destination, headers)
+
+    _vdo_prebuffer_cache[destination] = {
+        "content": content,
+        "timestamp": now,
+    }
+    logger.info(f"Vidoza MP4 cached ({len(content)} bytes) for {_vdo_cache_duration}s")
+
+    return content
 
 
 @proxy_router.head("/hls/manifest.m3u8")
@@ -604,42 +638,84 @@ async def proxy_stream_endpoint(
 ):
     """
     Proxify stream requests to the given video URL.
-
-    Args:
-        request (Request): The incoming HTTP request.
-        proxy_headers (ProxyRequestHeaders): The headers to include in the request.
-        destination (str): The URL of the stream to be proxied.
-        filename (str | None): The filename to be used in the response headers.
-
-    Returns:
-        Response: The HTTP response with the streamed content.
     """
     # Sanitize destination URL to fix common encoding issues
     destination = sanitize_url(destination)
-    
+
     # Check if destination contains DLHD pattern and extract stream directly
     dlhd_result = await _check_and_extract_dlhd_stream(request, destination, proxy_headers)
     if dlhd_result:
-        # Update destination and headers with extracted stream data
         destination = dlhd_result["destination_url"]
         proxy_headers.request.update(dlhd_result.get("request_headers", {}))
+
+    # ---- VIDOZA / VIDEZZ: full prebuffer to avoid 509 ----
+    parsed = urlparse(destination)
+    host = (parsed.hostname or "").lower()
+    is_vidoza = "vidoza.net" in host or "videzz.net" in host
+
+    # Clean empty range headers coming from client
     if proxy_headers.request.get("range", "").strip() == "":
         proxy_headers.request.pop("range", None)
-
     if proxy_headers.request.get("if-range", "").strip() == "":
         proxy_headers.request.pop("if-range", None)
-    
+
+    if is_vidoza:
+        logger = logging.getLogger(__name__)
+        logger.info(f"Using Vidoza prebuffer for {destination}, method={request.method}")
+
+        # HEAD: respond from cache metadata only, don't touch origin
+        if request.method == "HEAD":
+            cached = _vdo_prebuffer_cache.get(destination)
+            headers = proxy_headers.response.copy()
+            headers.setdefault("content-type", "video/mp4")
+
+            if cached:
+                size = len(cached["content"])
+                headers.setdefault("content-length", str(size))
+                headers.setdefault("accept-ranges", "none")
+            else:
+                # Not cached yet - just basic info
+                headers.setdefault("accept-ranges", "none")
+
+            return Response(status_code=200, headers=headers)
+
+        # GET: prebuffer full MP4 and serve from cache
+        content = await _prebuffer_vidoza_mp4(destination, proxy_headers.request)
+
+        # filename / content-disposition
+        content_disposition = None
+        if filename:
+            try:
+                filename.encode("latin-1")
+                content_disposition = f'attachment; filename="{filename}"'
+            except UnicodeEncodeError:
+                encoded_filename = quote(filename.encode("utf-8"))
+                content_disposition = f"attachment; filename*=UTF-8''{encoded_filename}"
+
+        resp_headers = proxy_headers.response.copy()
+        resp_headers.setdefault("content-type", "video/mp4")
+        resp_headers.setdefault("content-length", str(len(content)))
+        resp_headers.setdefault("accept-ranges", "none")
+        if content_disposition:
+            resp_headers["content-disposition"] = content_disposition
+
+        return Response(
+            content=content,
+            status_code=200,
+            media_type="video/mp4",
+            headers=resp_headers,
+        )
+
+    # ---- NON-VIDOZA: normal streaming behaviour ----
     if "range" not in proxy_headers.request:
         proxy_headers.request["range"] = "bytes=0-"
-    
+
     if filename:
         # If a filename is provided, set it in the headers using RFC 6266 format
         try:
-            # Try to encode with latin-1 first (simple case)
             filename.encode("latin-1")
             content_disposition = f'attachment; filename="{filename}"'
         except UnicodeEncodeError:
-            # For filenames with non-latin-1 characters, use RFC 6266 format with UTF-8
             encoded_filename = quote(filename.encode("utf-8"))
             content_disposition = f"attachment; filename*=UTF-8''{encoded_filename}"
 
