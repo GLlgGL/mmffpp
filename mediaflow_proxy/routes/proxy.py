@@ -1,5 +1,5 @@
 from typing import Annotated
-from urllib.parse import quote, unquote
+from urllib.parse import quote, unquote, urlparse
 import re
 import logging
 import httpx
