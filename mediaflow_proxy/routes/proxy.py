@@ -648,91 +648,93 @@ async def proxy_stream_endpoint(
         destination = dlhd_result["destination_url"]
         proxy_headers.request.update(dlhd_result.get("request_headers", {}))
 
-    # ---- VIDOZA / VIDEZZ: full prebuffer with Range support (Stremio compatible) ----
-parsed = urlparse(destination)
-host = (parsed.hostname or "").lower()
-is_vidoza = "vidoza.net" in host or "videzz.net" in host
+        # ---- VIDOZA / VIDEZZ: full prebuffer with Range support (Stremio compatible) ----
+    parsed = urlparse(destination)
+    host = (parsed.hostname or "").lower()
+    is_vidoza = "vidoza.net" in host or "videzz.net" in host
 
-# Remove empty Range/If-Range headers
-if proxy_headers.request.get("range", "").strip() == "":
-    proxy_headers.request.pop("range", None)
-if proxy_headers.request.get("if-range", "").strip() == "":
-    proxy_headers.request.pop("if-range", None)
+    # Remove empty Range/If-Range headers
+    if proxy_headers.request.get("range", "").strip() == "":
+        proxy_headers.request.pop("range", None)
+    if proxy_headers.request.get("if-range", "").strip() == "":
+        proxy_headers.request.pop("if-range", None)
 
-if is_vidoza:
-    logger = logging.getLogger(__name__)
-    logger.info(f"Using Vidoza prebuffer for {destination}, method={request.method}")
+    if is_vidoza:
+        logger = logging.getLogger(__name__)
+        logger.info(f"Using Vidoza prebuffer for {destination}, method={request.method}")
 
-    # HEAD — return metadata only
-    if request.method == "HEAD":
-        cached = _vdo_prebuffer_cache.get(destination)
-        headers = proxy_headers.response.copy()
-        headers.setdefault("content-type", "video/mp4")
-        headers.setdefault("accept-ranges", "bytes")
+        # HEAD — return metadata only
+        if request.method == "HEAD":
+            cached = _vdo_prebuffer_cache.get(destination)
+            headers = proxy_headers.response.copy()
+            headers.setdefault("content-type", "video/mp4")
+            headers.setdefault("accept-ranges", "bytes")
 
-        if cached:
-            size = len(cached["content"])
-            headers.setdefault("content-length", str(size))
-            headers.setdefault("content-range", f"bytes 0-{size-1}/{size}")
+            if cached:
+                size = len(cached["content"])
+                headers.setdefault("content-length", str(size))
+                headers.setdefault("content-range", f"bytes 0-{size-1}/{size}")
 
-        return Response(status_code=200, headers=headers)
+            return Response(status_code=200, headers=headers)
 
-    # GET — load full MP4 into cache
-    content = await _prebuffer_vidoza_mp4(destination, proxy_headers.request)
-    total = len(content)
+        # GET — load full MP4 into cache
+        content = await _prebuffer_vidoza_mp4(destination, proxy_headers.request)
+        total = len(content)
 
-    # -------- RANGE SUPPORT (REQUIRED BY STREMIO) --------
-    range_header = request.headers.get("range")
-    if range_header:
-        try:
-            unit, rng = range_header.split("=")
-            start_str, end_str = rng.split("-")
+        # -------- RANGE SUPPORT (REQUIRED BY STREMIO) --------
+        range_header = request.headers.get("range")
+        if range_header:
+            try:
+                unit, rng = range_header.split("=")
+                start_str, end_str = rng.split("-")
 
-            start = int(start_str)
-            end = int(end_str) if end_str else total - 1
-            if start >= total:
-                return Response(
-                    status_code=416,
-                    headers={
-                        "Content-Range": f"bytes */{total}",
-                        "Accept-Ranges": "bytes",
-                    },
+                start = int(start_str)
+                end = int(end_str) if end_str else total - 1
+                if start >= total:
+                    return Response(
+                        status_code=416,
+                        headers={
+                            "Content-Range": f"bytes */{total}",
+                            "Accept-Ranges": "bytes",
+                        },
+                    )
+
+                end = min(end, total - 1)
+                chunk = content[start:end + 1]
+                chunk_len = len(chunk)
+
+                headers = {
+                    "Content-Type": "video/mp4",
+                    "Content-Length": str(chunk_len),
+                    "Content-Range": f"bytes {start}-{end}/{total}",
+                    "Accept-Ranges": "bytes",
+                }
+
+                return Response(content=chunk, status_code=206, headers=headers)
+            except Exception:
+                logger.exception(f"Failed parsing Range header: {range_header}")
+                # fallback to full
+
+        # -------- NO RANGE: send entire MP4 --------
+        headers = {
+            "Content-Type": "video/mp4",
+            "Content-Length": str(total),
+            "Accept-Ranges": "bytes",
+            "Content-Range": f"bytes 0-{total-1}/{total}",
+        }
+
+        # Content-Disposition (filename)
+        if filename:
+            try:
+                filename.encode("latin-1")
+                headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+            except UnicodeEncodeError:
+                headers["Content-Disposition"] = (
+                    "attachment; filename*=UTF-8''" +
+                    quote(filename.encode('utf-8'))
                 )
 
-            end = min(end, total - 1)
-            chunk = content[start:end + 1]
-            chunk_len = len(chunk)
-
-            headers = {
-                "Content-Type": "video/mp4",
-                "Content-Length": str(chunk_len),
-                "Content-Range": f"bytes {start}-{end}/{total}",
-                "Accept-Ranges": "bytes",
-            }
-
-            return Response(content=chunk, status_code=206, headers=headers)
-        except Exception as e:
-            logger.exception(f"Failed parsing Range header: {range_header}")
-            # fallback to full
-
-    # -------- NO RANGE: send entire MP4 --------
-    headers = {
-        "Content-Type": "video/mp4",
-        "Content-Length": str(total),
-        "Accept-Ranges": "bytes",
-        "Content-Range": f"bytes 0-{total-1}/{total}",
-    }
-
-    # Content-Disposition (filename)
-    if filename:
-        try:
-            filename.encode("latin-1")
-            headers["Content-Disposition"] = f'attachment; filename="{filename}"'
-        except UnicodeEncodeError:
-            from urllib.parse import quote
-            headers["Content-Disposition"] = f"attachment; filename*=UTF-8''{quote(filename.encode('utf-8'))}"
-
-    return Response(content=content, status_code=200, headers=headers)
+        return Response(content=content, status_code=200, headers=headers)
 
     # ---- NON-VIDOZA: normal streaming behaviour ----
     if "range" not in proxy_headers.request:
