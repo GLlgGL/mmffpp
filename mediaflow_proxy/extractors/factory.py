@@ -42,7 +42,6 @@ class ExtractorFactory:
         "LuluStream": LuluStreamExtractor,
         "DLHD": DLHDExtractor,
         "Vavoo": VavooExtractor,
-        "VidGuard": VidGuardExtractor,
         "Vidmoly": VidmolyExtractor,
         "Vidoza": VidozaExtractor,
         "Fastream": FastreamExtractor,
