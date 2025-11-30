@@ -513,11 +513,15 @@ def get_proxy_headers(request: Request) -> ProxyRequestHeaders:
             request_headers["referer"] = request_headers.pop("referrer")
             
     # Remove ONLY empty Range / If-Range, leave everything else intact
-    for bad in ("range", "if-range"):
-        if bad in request_headers:
-            value = request_headers[bad]
-            if value is None or value.strip() == "":
-                request_headers.pop(bad, None)
+    for h in list(request_headers.keys()):
+        value = request_headers[h]
+
+    # Keep Range for TurboVidPlay extraction
+        if h in ("range", "if-range"):
+            continue
+
+        if value is None or value.strip() == "":
+            request_headers.pop(h, None)
 
     response_headers = {k[2:].lower(): v for k, v in request.query_params.items() if k.startswith("r_")}
     return ProxyRequestHeaders(request_headers, response_headers)
