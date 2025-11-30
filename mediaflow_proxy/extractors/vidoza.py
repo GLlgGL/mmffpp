@@ -6,50 +6,50 @@ from mediaflow_proxy.extractors.base import BaseExtractor, ExtractorError
 
 
 class VidozaExtractor(BaseExtractor):
+    def __init__(self, request_headers: dict):
+        super().__init__(request_headers)
+        # if your base doesn’t set this, keep it; otherwise you can remove:
+        self.mediaflow_endpoint = "proxy_stream_endpoint"
 
     async def extract(self, url: str, **kwargs) -> Dict[str, Any]:
         parsed = urlparse(url)
 
-        # Extract video ID whether it's embed or normal link
-        m = re.search(r'(?:embed-)?([A-Za-z0-9]+)\.html?', parsed.path)
-        if not m:
-            raise ExtractorError("VIDOZA: Invalid Vidoza URL")
-        video_id = m.group(1)
+        # Accept vidoza + videzz
+        if not parsed.hostname or not (
+            parsed.hostname.endswith("vidoza.net")
+            or parsed.hostname.endswith("videzz.net")
+        ):
+            raise ExtractorError("VIDOZA: Invalid domain")
 
-        # *** TARGET WATCH PAGE ON videzz.net ***
-        watch_url = f"https://videzz.net/{video_id}.html"
-
+        # Browser-like headers (very close to your curl)
         headers = self.base_headers.copy()
-        headers.update({
-            "referer": "https://vidoza.net/",
-            "origin": "https://vidoza.net",
-            "user-agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            ),
-            "accept": "*/*",
-            "accept-language": "en-US,en;q=0.9",
-        })
-
-        # Fetch WATCH PAGE (not embed)
-        response = await self._make_request(
-            watch_url,
-            headers=headers,
-            follow_redirects=True   # required
+        headers.update(
+            {
+                "referer": "https://vidoza.net/",
+                "user-agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                ),
+                "accept": "*/*",
+                "accept-language": "en-US,en;q=0.9",
+            }
         )
 
-        html = response.text
+        # 1) Fetch the embed page (or whatever URL you pass in)
+        response = await self._make_request(url, headers=headers)
+        html = response.text or ""
+
         if not html:
-            raise ExtractorError("VIDOZA: Empty watch page HTML")
+            raise ExtractorError("VIDOZA: Empty HTML from Vidoza")
 
         cookies = response.cookies or {}
 
-        # ResolveURL pattern extraction
+        # 2) Use YOUR EXACT WORKING REGEX to get url + label
         pattern = re.compile(
-            r'''["'\s](?:file|src)["'\s:]*["'](?P<url>[^"']+)'''
-            r'''(?:[^}\]]+)["']\s*res["'\s:]*["']?(?P<label>[^"']+)''',
-            re.IGNORECASE
+            r"""["']?\s*(?:file|src)\s*["']?\s*[:=,]?\s*["'](?P<url>[^"']+)"""
+            r"""(?:[^}>\]]+)["']?\s*res\s*["']?\s*[:=]\s*["']?(?P<label>[^"',]+)""",
+            re.IGNORECASE,
         )
 
         match = pattern.search(html)
@@ -59,11 +59,11 @@ class VidozaExtractor(BaseExtractor):
         mp4_url = match.group("url")
         label = match.group("label").strip()
 
-        # Fix // prefix
+        # Fix URLs like //str38.vidoza.net/...
         if mp4_url.startswith("//"):
             mp4_url = "https:" + mp4_url
 
-        # Attach cookies for token auth
+        # 3) Attach cookies (token may depend on these)
         if cookies:
             headers["cookie"] = "; ".join(f"{k}={v}" for k, v in cookies.items())
 
@@ -72,6 +72,6 @@ class VidozaExtractor(BaseExtractor):
             "request_headers": headers,
             "mediaflow_endpoint": self.mediaflow_endpoint,
             "meta": {
-                "label": label
-            }
+                "label": label,
+            },
         }
