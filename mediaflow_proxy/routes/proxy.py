@@ -1,5 +1,5 @@
 from typing import Annotated
-from urllib.parse import quote, unquote, urlparse
+from urllib.parse import quote, unquote
 import re
 import logging
 import httpx
@@ -97,11 +97,6 @@ def sanitize_url(url: str) -> str:
     
     return url
 
-def get_host(url: str) -> str:
-    try:
-        return urlparse(url).netloc.lower()
-    except:
-        return ""
 
 def extract_drm_params_from_url(url: str) -> tuple[str, str, str]:
     """
@@ -621,7 +616,6 @@ async def proxy_stream_endpoint(
     """
     # Sanitize destination URL to fix common encoding issues
     destination = sanitize_url(destination)
-    host = get_host(destination)
     
     # Check if destination contains DLHD pattern and extract stream directly
     dlhd_result = await _check_and_extract_dlhd_stream(request, destination, proxy_headers)
@@ -629,30 +623,14 @@ async def proxy_stream_endpoint(
         # Update destination and headers with extracted stream data
         destination = dlhd_result["destination_url"]
         proxy_headers.request.update(dlhd_result.get("request_headers", {}))
-    
-
-# --- HOST-SPECIFIC HEADER RULES ---
-
-# VIDOZA: remove all empty headers + remove Range headers completely
-    if "videzz" in host:
-        for h in list(proxy_headers.request.keys()):
-            val = proxy_headers.request[h]
-            if val is None or val.strip() == "":
-                proxy_headers.request.pop(h, None)
-
+    if proxy_headers.request.get("range", "").strip() == "":
         proxy_headers.request.pop("range", None)
+
+    if proxy_headers.request.get("if-range", "").strip() == "":
         proxy_headers.request.pop("if-range", None)
-
-# TURBOVID: keep headers during extractor phase
-# but remove empty Range AFTER extraction only
-    else:
-        if proxy_headers.request.get("range", "").strip() == "":
-            proxy_headers.request.pop("range", None)
-
-        if proxy_headers.request.get("if-range", "").strip() == "":
-            proxy_headers.request.pop("if-range", None)
     
-    
+    if "range" not in proxy_headers.request:
+        proxy_headers.request["range"] = "bytes=0-"
     
     if filename:
         # If a filename is provided, set it in the headers using RFC 6266 format
