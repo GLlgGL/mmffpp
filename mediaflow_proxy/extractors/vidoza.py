@@ -1,6 +1,6 @@
 import re
 from typing import Dict, Any
-from urllib.parse import urlparse, urljoin
+from urllib.parse import urlparse
 
 from mediaflow_proxy.extractors.base import BaseExtractor, ExtractorError
 
@@ -10,16 +10,15 @@ class VidozaExtractor(BaseExtractor):
     async def extract(self, url: str, **kwargs) -> Dict[str, Any]:
         parsed = urlparse(url)
 
-        # Extract video ID from ANY form (embed or watch)
+        # Extract video ID whether it's embed or normal link
         m = re.search(r'(?:embed-)?([A-Za-z0-9]+)\.html?', parsed.path)
         if not m:
             raise ExtractorError("VIDOZA: Invalid Vidoza URL")
         video_id = m.group(1)
 
-        # ALWAYS use canonical watch page for extraction
-        watch_url = f"https://vidoza.net/{video_id}.html"
+        # *** TARGET WATCH PAGE ON videzz.net ***
+        watch_url = f"https://videzz.net/{video_id}.html"
 
-        # Browser-like headers
         headers = self.base_headers.copy()
         headers.update({
             "referer": "https://vidoza.net/",
@@ -33,11 +32,11 @@ class VidozaExtractor(BaseExtractor):
             "accept-language": "en-US,en;q=0.9",
         })
 
-        # Fetch the canonical watch page (NO REDIRECT)
+        # Fetch WATCH PAGE (not embed)
         response = await self._make_request(
             watch_url,
             headers=headers,
-            follow_redirects=False
+            follow_redirects=True   # required
         )
 
         html = response.text
@@ -46,7 +45,7 @@ class VidozaExtractor(BaseExtractor):
 
         cookies = response.cookies or {}
 
-        # JS Player Extraction (ResolveURL-style)
+        # ResolveURL pattern extraction
         pattern = re.compile(
             r'''["'\s](?:file|src)["'\s:]*["'](?P<url>[^"']+)'''
             r'''(?:[^}\]]+)["']\s*res["'\s:]*["']?(?P<label>[^"']+)''',
@@ -60,11 +59,11 @@ class VidozaExtractor(BaseExtractor):
         mp4_url = match.group("url")
         label = match.group("label").strip()
 
-        # Normalize URLs like //str34...
+        # Fix // prefix
         if mp4_url.startswith("//"):
             mp4_url = "https:" + mp4_url
 
-        # Attach cookies
+        # Attach cookies for token auth
         if cookies:
             headers["cookie"] = "; ".join(f"{k}={v}" for k, v in cookies.items())
 
