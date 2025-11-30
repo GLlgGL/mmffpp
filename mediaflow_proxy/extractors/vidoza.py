@@ -29,7 +29,7 @@ class VidozaExtractor(BaseExtractor):
         })
 
         # STEP 1 — Fetch the embed or watch page
-        response = await this._make_request(
+        response = await self._make_request(
             url,
             headers=headers
         )
