@@ -1,7 +1,6 @@
 from typing import Annotated
-from urllib.parse import quote, unquote
+from urllib.parse import quote, unquote, urlparse
 import re
-import tldextract
 import logging
 import httpx
 import time
@@ -98,6 +97,11 @@ def sanitize_url(url: str) -> str:
     
     return url
 
+def get_host(url: str) -> str:
+    try:
+        return urlparse(url).netloc.lower()
+    except:
+        return ""
 
 def extract_drm_params_from_url(url: str) -> tuple[str, str, str]:
     """
@@ -617,6 +621,7 @@ async def proxy_stream_endpoint(
     """
     # Sanitize destination URL to fix common encoding issues
     destination = sanitize_url(destination)
+    host = get_host(destination)
     
     # Check if destination contains DLHD pattern and extract stream directly
     dlhd_result = await _check_and_extract_dlhd_stream(request, destination, proxy_headers)
@@ -630,7 +635,7 @@ async def proxy_stream_endpoint(
 # --- HOST-SPECIFIC HEADER RULES ---
 
 # VIDOZA: remove all empty headers + remove Range headers completely
-    if host == "videzz":
+    if "videzz" in host:
         for h in list(proxy_headers.request.keys()):
             val = proxy_headers.request[h]
             if val is None or val.strip() == "":
