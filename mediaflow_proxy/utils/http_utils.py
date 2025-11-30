@@ -514,18 +514,7 @@ def get_proxy_headers(request: Request) -> ProxyRequestHeaders:
             
     for h in list(request_headers.keys()):
         value = request_headers[h]
-
-    # Skip deleting headers that must exist for many streaming hosts
-        if h in ("range", "if-range", "referer", "origin"):
-            continue
-
-    # Remove only headers that are literally None
-        if value is None:
-            request_headers.pop(h, None)
-            continue
-
-    # Remove headers that are ONLY whitespace
-        if isinstance(value, str) and not value.strip():
+        if value is None or value.strip() == "":
             request_headers.pop(h, None)
             
 
