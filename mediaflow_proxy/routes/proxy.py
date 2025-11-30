@@ -625,14 +625,25 @@ async def proxy_stream_endpoint(
         destination = dlhd_result["destination_url"]
         proxy_headers.request.update(dlhd_result.get("request_headers", {}))
         
+    CRITICAL_HEADERS = {
+    "range",
+    "if-range",
+    "referer",
+    "origin",
+    "user-agent",
+    "accept",
+    "accept-language",
+    "cookie",
+    }
+
     for h in list(proxy_headers.request.keys()):
         value = proxy_headers.request[h]
 
-    # DO NOT remove Range or If-Range (TurboVid needs them even when empty)
-        if h in ("range", "if-range"):
+    # never remove these even if empty
+        if h in CRITICAL_HEADERS:
             continue
 
-    # Clean all other empty headers (Vidoza requires this)
+    # only remove truly empty headers
         if value is None or value.strip() == "":
             proxy_headers.request.pop(h, None)
     
