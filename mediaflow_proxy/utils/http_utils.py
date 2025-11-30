@@ -512,35 +512,21 @@ def get_proxy_headers(request: Request) -> ProxyRequestHeaders:
         if "referer" not in request_headers:
             request_headers["referer"] = request_headers.pop("referrer")
             
-    # Detect destination host
-    dest = request.query_params.get("d", "")
-    host = parse.urlparse(dest).netloc.lower()
-
-    is_vidoza = "vidoza" in host
-    is_turbovid = "turbovid" in host or "turbovidplay" in host
-            
-    # Header cleanup
     for h in list(request_headers.keys()):
         value = request_headers[h]
 
-        # ---------------------------------------
-        # VIDOZA: REMOVE empty Range/If-Range
-        # ---------------------------------------
-        if is_vidoza:
-            if value is None or value.strip() == "":
-                request_headers.pop(h, None)
-                continue
+    # Skip deleting headers that must exist for many streaming hosts
+        if h in ("range", "if-range", "referer", "origin"):
+            continue
 
-        # ---------------------------------------
-        # TURBOVID: KEEP Range even if empty
-        # ---------------------------------------
-        if is_turbovid and h in ("range", "if-range"):
-            continue  # don't delete it
+    # Remove only headers that are literally None
+        if value is None:
+            request_headers.pop(h, None)
+            continue
 
-        # Default: remove empty non-range headers
-        if h not in ("range", "if-range"):
-            if value is None or value.strip() == "":
-                request_headers.pop(h, None)
+    # Remove headers that are ONLY whitespace
+        if isinstance(value, str) and not value.strip():
+            request_headers.pop(h, None)
             
 
     response_headers = {k[2:].lower(): v for k, v in request.query_params.items() if k.startswith("r_")}
