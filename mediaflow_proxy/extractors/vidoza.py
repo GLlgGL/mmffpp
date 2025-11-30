@@ -68,6 +68,6 @@ class VidozaExtractor(BaseExtractor):
 
         return {
             "destination_url": mp4_url,
-            "request_headers": headers,
+            #"request_headers": headers,
             "mediaflow_endpoint": self.mediaflow_endpoint,
         }
