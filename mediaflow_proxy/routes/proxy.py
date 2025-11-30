@@ -629,7 +629,7 @@ async def proxy_stream_endpoint(
     if proxy_headers.request.get("if-range", "").strip() == "":
         proxy_headers.request.pop("if-range", None)
     
-    if "range" not in proxy_headers.request
+    if ("range" not in proxy_headers.request
         and destination.lower().endswith(".mp4")):
         proxy_headers.request["range"] = "bytes=0-"
     
