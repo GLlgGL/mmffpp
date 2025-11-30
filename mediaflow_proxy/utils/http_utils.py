@@ -512,14 +512,11 @@ def get_proxy_headers(request: Request) -> ProxyRequestHeaders:
         if "referer" not in request_headers:
             request_headers["referer"] = request_headers.pop("referrer")
             
-    for h in list(request_headers.keys()):
-        value = request_headers[h]
-        if value is None or value.strip() == "":
-            request_headers.pop(h, None)
-            
+    # Remove ONLY empty Range / If-Range, leave everything else intact
     for bad in ("range", "if-range"):
         if bad in request_headers:
-            if not request_headers[bad].strip():
+            value = request_headers[bad]
+            if value is None or value.strip() == "":
                 request_headers.pop(bad, None)
 
     response_headers = {k[2:].lower(): v for k, v in request.query_params.items() if k.startswith("r_")}
