@@ -512,6 +512,9 @@ def get_proxy_headers(request: Request) -> ProxyRequestHeaders:
         if "referer" not in request_headers:
             request_headers["referer"] = request_headers.pop("referrer")
             
+    if "vidoza" in host or "videzz" in host:
+        request_headers.pop("range", None)
+        request_headers.pop("if-range", None)
 
     response_headers = {k[2:].lower(): v for k, v in request.query_params.items() if k.startswith("r_")}
     return ProxyRequestHeaders(request_headers, response_headers)
