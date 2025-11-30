@@ -3,7 +3,7 @@ import typing
 from dataclasses import dataclass
 from functools import partial
 from urllib import parse
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 import anyio
 import h11
@@ -512,6 +512,9 @@ def get_proxy_headers(request: Request) -> ProxyRequestHeaders:
         if "referer" not in request_headers:
             request_headers["referer"] = request_headers.pop("referrer")
             
+    dest = request.query_params.get("d", "")
+    host = urlparse(dest).netloc.lower() if dest else ""
+    
     if "vidoza" in host or "videzz" in host:
         request_headers.pop("range", None)
         request_headers.pop("if-range", None)
