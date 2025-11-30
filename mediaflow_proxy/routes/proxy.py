@@ -625,11 +625,34 @@ async def proxy_stream_endpoint(
         destination = dlhd_result["destination_url"]
         proxy_headers.request.update(dlhd_result.get("request_headers", {}))
         
-    if proxy_headers.request.get("range", "").strip() == "":
-        proxy_headers.request.pop("range", None)
+    
 
-    if proxy_headers.request.get("if-range", "").strip() == "":
-        proxy_headers.request.pop("if-range", None)
+    host = urlparse(destination).netloc.lower()
+    is_vidoza = "vidoza" in host
+    is_turbovid = "turbovid" in host or "turbovidplay" in host
+        
+    # -------------------------
+# Host-specific empty-range cleanup
+# -------------------------
+
+# Vidoza → REMOVE empty range headers
+    if is_vidoza:
+        if proxy_headers.request.get("range", "").strip() == "":
+            proxy_headers.request.pop("range", None)
+
+        if proxy_headers.request.get("if-range", "").strip() == "":
+            proxy_headers.request.pop("if-range", None)
+
+# TurboVid / TurboVidPlay → KEEP empty/invalid range headers
+    elif is_turbovid:
+        pass  # do nothing
+
+# All other hosts → safe cleanup (optional)
+    else:
+        if proxy_headers.request.get("range", "").strip() == "":
+            proxy_headers.request.pop("range", None)
+        if proxy_headers.request.get("if-range", "").strip() == "":
+            proxy_headers.request.pop("if-range", None)
     
     
     if filename:
