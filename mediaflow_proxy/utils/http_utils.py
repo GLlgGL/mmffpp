@@ -514,6 +514,12 @@ def get_proxy_headers(request: Request) -> ProxyRequestHeaders:
             
     for h in list(request_headers.keys()):
         value = request_headers[h]
+
+    # Do NOT remove empty Range / If-Range — TurboVidPlay needs them!
+        if h in ("range", "if-range"):
+            continue
+
+    # Remove empty headers for everything else
         if value is None or value.strip() == "":
             request_headers.pop(h, None)
             
