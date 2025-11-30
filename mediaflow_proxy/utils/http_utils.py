@@ -512,6 +512,9 @@ def get_proxy_headers(request: Request) -> ProxyRequestHeaders:
         if "referer" not in request_headers:
             request_headers["referer"] = request_headers.pop("referrer")
             
+    dest = request.query_params.get("d", "")
+    host = urlparse(dest).netloc.lower()
+            
     if "vidoza" in host or "videzz" in host:
         # Remove ALL empty headers
         for h in list(request_headers.keys()):
