@@ -511,15 +511,20 @@ def get_proxy_headers(request: Request) -> ProxyRequestHeaders:
         if "referer" not in request_headers:
             request_headers["referer"] = request_headers.pop("referrer")
             
-    for h in list(request_headers.keys()):
-        value = request_headers[h]
-        if value is None:
-        # Always drop None
-            request_headers.pop(h, None)
-        elif not value.strip():
-        # Drop empty headers EXCEPT range-ish ones
-            if h.lower() not in ("range", "if-range"):
+    
+
+    if drop_empty:
+        # Tuebovid path: drop empty headers (except range/if-range)
+        for h in list(request_headers.keys()):
+            value = request_headers[h]
+            if value is None:
                 request_headers.pop(h, None)
+            elif not value.strip() and h.lower() not in ("range", "if-range"):
+                request_headers.pop(h, None)
+    else:
+        # Vidoza (and others) path: keep empties exactly as client sent them
+        # i.e. do nothing here
+        pass
 
     response_headers = {k[2:].lower(): v for k, v in request.query_params.items() if k.startswith("r_")}
     return ProxyRequestHeaders(request_headers, response_headers)
