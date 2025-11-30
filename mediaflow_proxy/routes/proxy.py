@@ -1,6 +1,7 @@
 from typing import Annotated
 from urllib.parse import quote, unquote
 import re
+import tldextract
 import logging
 import httpx
 import time
@@ -623,11 +624,29 @@ async def proxy_stream_endpoint(
         # Update destination and headers with extracted stream data
         destination = dlhd_result["destination_url"]
         proxy_headers.request.update(dlhd_result.get("request_headers", {}))
-    if proxy_headers.request.get("range", "").strip() == "":
-        proxy_headers.request.pop("range", None)
+    
+    host = tldextract.extract(destination).domain
 
-    if proxy_headers.request.get("if-range", "").strip() == "":
+# --- HOST-SPECIFIC HEADER RULES ---
+
+# VIDOZA: remove all empty headers + remove Range headers completely
+    if host == "videzz":
+        for h in list(proxy_headers.request.keys()):
+            val = proxy_headers.request[h]
+            if val is None or val.strip() == "":
+                proxy_headers.request.pop(h, None)
+
+        proxy_headers.request.pop("range", None)
         proxy_headers.request.pop("if-range", None)
+
+# TURBOVID: keep headers during extractor phase
+# but remove empty Range AFTER extraction only
+    else:
+        if proxy_headers.request.get("range", "").strip() == "":
+            proxy_headers.request.pop("range", None)
+
+        if proxy_headers.request.get("if-range", "").strip() == "":
+            proxy_headers.request.pop("if-range", None)
     
     
     
