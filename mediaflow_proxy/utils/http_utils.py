@@ -512,12 +512,12 @@ def get_proxy_headers(request: Request) -> ProxyRequestHeaders:
         if "referer" not in request_headers:
             request_headers["referer"] = request_headers.pop("referrer")
             
-    dest = request.query_params.get("d", "")
-    host = urlparse(dest).netloc.lower() if dest else ""
-    
     if "vidoza" in host or "videzz" in host:
-        request_headers.pop("range", None)
-        request_headers.pop("if-range", None)
+        # Remove ALL empty headers
+        for h in list(request_headers.keys()):
+            v = request_headers[h]
+            if v is None or v.strip() == "":
+                request_headers.pop(h, None)
 
     response_headers = {k[2:].lower(): v for k, v in request.query_params.items() if k.startswith("r_")}
     return ProxyRequestHeaders(request_headers, response_headers)
