@@ -21,7 +21,6 @@ class VidozaExtractor(BaseExtractor):
         ):
             raise ExtractorError("VIDOZA: Invalid domain")
 
-        # Browser-like headers (very close to your curl)
         headers = self.base_headers.copy()
         headers.update(
             {
@@ -45,7 +44,7 @@ class VidozaExtractor(BaseExtractor):
 
         cookies = response.cookies or {}
 
-        # 2) Use YOUR EXACT WORKING REGEX to get url + label
+        # 2) Extract final link with REGEX
         pattern = re.compile(
             r"""["']?\s*(?:file|src)\s*["']?\s*[:=,]?\s*["'](?P<url>[^"']+)"""
             r"""(?:[^}>\]]+)["']?\s*res\s*["']?\s*[:=]\s*["']?(?P<label>[^"',]+)""",
