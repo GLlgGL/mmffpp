@@ -630,7 +630,6 @@ async def proxy_stream_endpoint(
         destination = dlhd_result["destination_url"]
         proxy_headers.request.update(dlhd_result.get("request_headers", {}))
     
-    host = tldextract.extract(destination).domain
 
 # --- HOST-SPECIFIC HEADER RULES ---
 
