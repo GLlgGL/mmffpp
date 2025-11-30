@@ -1,6 +1,6 @@
 import re
 from typing import Dict, Any
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
 
 from mediaflow_proxy.extractors.base import BaseExtractor, ExtractorError
 
@@ -10,9 +10,14 @@ class VidozaExtractor(BaseExtractor):
     async def extract(self, url: str, **kwargs) -> Dict[str, Any]:
         parsed = urlparse(url)
 
-        # Must be canonical embed/watch domain
-        if not parsed.hostname or not parsed.hostname.endswith("vidoza.net"):
-            raise ExtractorError("VIDOZA: Invalid domain")
+        # Extract video ID from ANY form (embed or watch)
+        m = re.search(r'(?:embed-)?([A-Za-z0-9]+)\.html?', parsed.path)
+        if not m:
+            raise ExtractorError("VIDOZA: Invalid Vidoza URL")
+        video_id = m.group(1)
+
+        # ALWAYS use canonical watch page for extraction
+        watch_url = f"https://vidoza.net/{video_id}.html"
 
         # Browser-like headers
         headers = self.base_headers.copy()
@@ -28,20 +33,20 @@ class VidozaExtractor(BaseExtractor):
             "accept-language": "en-US,en;q=0.9",
         })
 
-        # STEP 1 — Fetch the embed or watch page
+        # Fetch the canonical watch page (NO REDIRECT)
         response = await self._make_request(
-            url,
-            headers=headers
+            watch_url,
+            headers=headers,
+            follow_redirects=False
         )
+
         html = response.text
-
         if not html:
-            raise ExtractorError("VIDOZA: Empty HTML")
+            raise ExtractorError("VIDOZA: Empty watch page HTML")
 
-        # Capture cookies (some streams require this)
         cookies = response.cookies or {}
 
-        # STEP 2 — Extract URL + label using ResolveURL pattern
+        # JS Player Extraction (ResolveURL-style)
         pattern = re.compile(
             r'''["'\s](?:file|src)["'\s:]*["'](?P<url>[^"']+)'''
             r'''(?:[^}\]]+)["']\s*res["'\s:]*["']?(?P<label>[^"']+)''',
@@ -55,11 +60,11 @@ class VidozaExtractor(BaseExtractor):
         mp4_url = match.group("url")
         label = match.group("label").strip()
 
-        # Normalize URLs starting with //
+        # Normalize URLs like //str34...
         if mp4_url.startswith("//"):
             mp4_url = "https:" + mp4_url
 
-        # STEP 3 — Attach cookies to headers
+        # Attach cookies
         if cookies:
             headers["cookie"] = "; ".join(f"{k}={v}" for k, v in cookies.items())
 
@@ -68,6 +73,6 @@ class VidozaExtractor(BaseExtractor):
             "request_headers": headers,
             "mediaflow_endpoint": self.mediaflow_endpoint,
             "meta": {
-                "label": label  # <—— WE RETURN THE LABEL HERE
+                "label": label
             }
         }
