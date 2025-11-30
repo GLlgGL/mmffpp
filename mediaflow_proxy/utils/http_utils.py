@@ -506,25 +506,17 @@ def get_proxy_headers(request: Request) -> ProxyRequestHeaders:
     """
     request_headers = {k: v for k, v in request.headers.items() if k in SUPPORTED_REQUEST_HEADERS}
     request_headers.update({k[2:].lower(): v for k, v in request.query_params.items() if k.startswith("h_")})
+
     # Handle common misspelling of referer
     if "referrer" in request_headers:
         if "referer" not in request_headers:
             request_headers["referer"] = request_headers.pop("referrer")
             
-    drop_empty = request_headers.pop("x-mfp-drop-empty-headers", None) == "1"
-
-    if drop_empty:
-        # Tuebovid path: drop empty headers (except range/if-range)
-        for h in list(request_headers.keys()):
-            value = request_headers[h]
-            if value is None:
-                request_headers.pop(h, None)
-            elif not value.strip() and h.lower() not in ("range", "if-range"):
-                request_headers.pop(h, None)
-    else:
-        # Vidoza (and others) path: keep empties exactly as client sent them
-        # i.e. do nothing here
-        pass
+    for h in list(request_headers.keys()):
+        value = request_headers[h]
+        if value is None or value.strip() == "":
+            request_headers.pop(h, None)
+            
 
     response_headers = {k[2:].lower(): v for k, v in request.query_params.items() if k.startswith("r_")}
     return ProxyRequestHeaders(request_headers, response_headers)
