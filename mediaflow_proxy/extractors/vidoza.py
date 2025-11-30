@@ -8,6 +8,7 @@ from mediaflow_proxy.extractors.base import BaseExtractor, ExtractorError
 class VidozaExtractor(BaseExtractor):
     def __init__(self, request_headers: dict):
         super().__init__(request_headers)
+        # if your base doesn’t set this, keep it; otherwise you can remove:
         self.mediaflow_endpoint = "proxy_stream_endpoint"
 
     async def extract(self, url: str, **kwargs) -> Dict[str, Any]:
@@ -20,7 +21,7 @@ class VidozaExtractor(BaseExtractor):
         ):
             raise ExtractorError("VIDOZA: Invalid domain")
 
-        # Browser-like headers
+        # Browser-like headers (very close to your curl)
         headers = self.base_headers.copy()
         headers.update(
             {
@@ -35,7 +36,7 @@ class VidozaExtractor(BaseExtractor):
             }
         )
 
-        # 1) Fetch page
+        # 1) Fetch the embed page (or whatever URL you pass in)
         response = await self._make_request(url, headers=headers)
         html = response.text or ""
 
@@ -44,22 +45,25 @@ class VidozaExtractor(BaseExtractor):
 
         cookies = response.cookies or {}
 
-        # 2) Extract only URL
+        # 2) Use YOUR EXACT WORKING REGEX to get url + label
         pattern = re.compile(
-            r"""["']?\s*(?:file|src)\s*["']?\s*[:=,]?\s*["'](?P<url>[^"']+)""",
+            r"""["']?\s*(?:file|src)\s*["']?\s*[:=,]?\s*["'](?P<url>[^"']+)"""
+            r"""(?:[^}>\]]+)["']?\s*res\s*["']?\s*[:=]\s*["']?(?P<label>[^"',]+)""",
             re.IGNORECASE,
         )
 
         match = pattern.search(html)
         if not match:
-            raise ExtractorError("VIDOZA: Unable to extract video URL from JS")
+            raise ExtractorError("VIDOZA: Unable to extract video + label from JS")
 
         mp4_url = match.group("url")
+        label = match.group("label").strip()
 
+        # Fix URLs like //str38.vidoza.net/...
         if mp4_url.startswith("//"):
             mp4_url = "https:" + mp4_url
 
-        # 3) Attach cookies (if present)
+        # 3) Attach cookies (token may depend on these)
         if cookies:
             headers["cookie"] = "; ".join(f"{k}={v}" for k, v in cookies.items())
 
