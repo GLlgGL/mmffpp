@@ -504,6 +504,13 @@ def get_proxy_headers(request: Request) -> ProxyRequestHeaders:
     Returns:
         ProxyRequest: A named tuple containing the request headers and response headers.
     """
+    qp = dict(request.query_params)
+
+    # --- FIX FOR VIDOZA ---
+    # Remove empty h_ headers BEFORE processing
+    for k in list(qp.keys()):
+        if k.startswith("h_") and (qp[k] is None or qp[k].strip() == ""):
+            qp.pop(k, None)
     request_headers = {k: v for k, v in request.headers.items() if k in SUPPORTED_REQUEST_HEADERS}
     request_headers.update({k[2:].lower(): v for k, v in request.query_params.items() if k.startswith("h_")})
 
