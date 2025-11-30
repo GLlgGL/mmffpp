@@ -628,7 +628,7 @@ async def proxy_stream_endpoint(
     
 
     host = urlparse(destination).netloc.lower()
-    is_vidoza = "vidoza" in host
+    is_vidoza = "videzz" in host
     is_turbovid = "turbovid" in host or "turbovidplay" in host
         
     # -------------------------
