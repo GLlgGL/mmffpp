@@ -510,8 +510,6 @@ def get_proxy_headers(request: Request) -> ProxyRequestHeaders:
     if "referrer" in request_headers:
         if "referer" not in request_headers:
             request_headers["referer"] = request_headers.pop("referrer")
-            
-    
 
     if drop_empty:
         # Tuebovid path: drop empty headers (except range/if-range)
