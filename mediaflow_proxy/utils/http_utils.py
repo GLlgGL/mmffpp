@@ -517,6 +517,10 @@ def get_proxy_headers(request: Request) -> ProxyRequestHeaders:
         if value is None or value.strip() == "":
             request_headers.pop(h, None)
             
+    for bad in ("range", "if-range"):
+        if bad in request_headers:
+            if not request_headers[bad].strip():
+                request_headers.pop(bad, None)
 
     response_headers = {k[2:].lower(): v for k, v in request.query_params.items() if k.startswith("r_")}
     return ProxyRequestHeaders(request_headers, response_headers)
