@@ -114,4 +114,9 @@ class VKExtractor(BaseExtractor):
             or params.get("url720")
             or params.get("url480")
             or params.get("url360")
+            or params.get("hls")  # fallback only if MP4 absent
+        )
+
+)
+
         )
