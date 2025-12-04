@@ -71,7 +71,7 @@ class VKExtractor(BaseExtractor):
         return {
             "destination_url": mpd,
             "request_headers": headers,
-            "mediaflow_endpoint": "mpd_manifest_proxy",
+            "mediaflow_endpoint": self.mediaflow_endpoint,
         }
 
     # =====================================================================
