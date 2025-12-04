@@ -1,9 +1,8 @@
-import json
 import re
+import json
 from typing import Dict, Any
 
 from mediaflow_proxy.extractors.base import BaseExtractor, ExtractorError
-
 
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -15,8 +14,10 @@ class VKExtractor(BaseExtractor):
 
     async def extract(self, url: str, **kwargs) -> Dict[str, Any]:
 
+        # Normalize URL
         embed_url = self._normalize(url)
-        ajax_url = self._build_ajax_url(embed_url)
+        ajax_url = self._get_ajax_url(embed_url)
+        ajax_data = self._get_ajax_data(embed_url)
 
         headers = {
             "User-Agent": UA,
@@ -24,111 +25,114 @@ class VKExtractor(BaseExtractor):
             "Origin": "https://vkvideo.ru",
             "Cookie": "remixlang=0",
             "X-Requested-With": "XMLHttpRequest",
+            "Accept": "*/*",
+            "Accept-Encoding": "gzip, deflate, br",
         }
 
-        data = self._build_ajax_data(embed_url)
-
+        # 1️⃣ CALL act=show TO GET DASH URL
         response = await self._make_request(
-            ajax_url, method="POST", data=data, headers=headers
+            ajax_url,
+            method="POST",
+            data=ajax_data,
+            headers=headers
         )
 
-        text = response.text.lstrip("<!--")
-
+        raw = (response.text or "").lstrip("<!--")
         try:
-            js = json.loads(text)
+            js = json.loads(raw)
         except:
             raise ExtractorError("VK: invalid JSON payload")
 
-        # -----------------------------------------------------
-        # FIND THE CORRECT DASH MPD
-        # -----------------------------------------------------
-        mpd = self._find_mpd(js)
-        if not mpd:
-            raise ExtractorError("VK: No DASH MPD found in payload")
+        # 2️⃣ EXTRACT DASH MPD FROM PAYLOAD
+        mpd_url = self._extract_dash(js)
+        if not mpd_url:
+            raise ExtractorError("VK: No DASH MPD found")
 
-        # Validate MPD is not full-file type1/type3 URL
-        if not self._is_valid_mpd_url(mpd):
-            raise ExtractorError("VK: MPD is invalid (full file returned)")
+        # MPD URL is missing the host → add it (vkvideo CDN server)
+        full_mpd = self._complete_mpd(embed_url, mpd_url)
 
         return {
-            "destination_url": mpd,
+            "destination_url": full_mpd,
             "request_headers": headers,
             "mediaflow_endpoint": "mpd_manifest_proxy",
         }
 
-    # ---------------------------------------------------------
-    # NORMALIZATION
-    # ---------------------------------------------------------
+    # ------------------------------------------------------------
+    # HELPERS
+    # ------------------------------------------------------------
 
     def _normalize(self, url: str) -> str:
         if "video_ext.php" in url:
             return url
+
         m = re.search(r"video(-?\d+)_(\d+)", url)
         if not m:
             return url
-        return f"https://vk.com/video_ext.php?oid={m.group(1)}&id={m.group(2)}"
 
-    def _build_ajax_url(self, embed_url: str) -> str:
+        oid, vid = m.group(1), m.group(2)
+        return f"https://vkvideo.ru/video_ext.php?oid={oid}&id={vid}"
+
+    def _get_ajax_url(self, embed_url: str) -> str:
         host = re.search(r"https?://([^/]+)", embed_url).group(1)
         return f"https://{host}/al_video.php?act=show"
 
-    def _build_ajax_data(self, embed_url: str):
-        qs = re.search(r"\?(.*)", embed_url)
-        parts = dict(x.split("=") for x in qs.group(1).split("&")) if qs else {}
+    def _get_ajax_data(self, embed_url: str):
+        qs = re.findall(r"([a-zA-Z0-9_]+)=([^&]+)", embed_url)
+        qs = dict(qs)
+
         return {
             "act": "show",
-            "al": "1",
-            "video": f"{parts.get('oid')}_{parts.get('id')}",
+            "al": 1,
+            "video": f"{qs.get('oid')}_{qs.get('id')}"
         }
 
-    # ---------------------------------------------------------
-    # MAIN MPD FINDER (works for all VK formats)
-    # ---------------------------------------------------------
+    # ------------------------------------------------------------
+    # PARSE DASH URL
+    # ------------------------------------------------------------
 
-    def _find_mpd(self, js: Any) -> str | None:
+    def _extract_dash(self, js):
+        """
+        Looks inside:
+        payload → player → cache → data → dash
+        """
         payload = []
 
-        for i in js.get("payload", []):
-            if isinstance(i, list):
-                payload = i
+        for item in js.get("payload", []):
+            if isinstance(item, list):
+                payload = item
 
         for item in payload:
             if not isinstance(item, dict):
                 continue
 
-            player = item.get("player")
-            if not player:
-                continue
+            player = item.get("player", {})
+            cache = player.get("cache", {}).get("data", {})
 
-            # 1) MOST COMMON
-            if "dash_manifest" in player:
-                return player["dash_manifest"]
-
-            # 2) SOMETIMES inside params
-            params = player.get("params")
-            if isinstance(params, list) and params:
-                dash = params[0].get("dash")
-                if dash:
-                    return dash
-
-            # 3) CACHE (rare)
-            cache = player.get("cache", {})
-            dash = cache.get("data", {}).get("dash")
+            # MAIN DASH SOURCE
+            dash = cache.get("dash")
             if dash:
                 return dash
 
+            # SOME VK RETURNS dash_manifest instead
+            dash2 = player.get("dash_manifest")
+            if dash2:
+                return dash2
+
         return None
 
-    # ---------------------------------------------------------
-    # Validate MPD URL (exclude full MP4 download URLs)
-    # ---------------------------------------------------------
+    # ------------------------------------------------------------
+    # COMPLETE MPD URL
+    # ------------------------------------------------------------
 
-    def _is_valid_mpd_url(self, url: str) -> bool:
-        forbidden = [
-            "fromCache=1",
-            "ch=",
-            "appId=",
-            "type=1",  # full-file
-            "type=3",  # full-file HD
-        ]
-        return not any(f in url for f in forbidden)
+    def _complete_mpd(self, embed_url: str, mpd: str) -> str:
+        """
+        VK returns MPD starting with ?expires=...
+        Add correct host of video_ext.php file.
+        """
+        host = re.search(r"https?://([^/]+)", embed_url).group(1)
+        origin = f"https://{host}/"
+
+        if mpd.startswith("?"):
+            return origin + mpd
+
+        return mpd
