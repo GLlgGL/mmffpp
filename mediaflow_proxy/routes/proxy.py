@@ -651,7 +651,13 @@ async def proxy_stream_endpoint(
     # Case 2: Normal range request → pass through
     proxy_headers.request["Range"] = range_header
 
-    
+    # FIXED: Always allow Range, but do NOT override the client's value
+
+    if client_range:
+        proxy_headers.request["range"] = client_range
+    else:
+        proxy_headers.request["range"] = "bytes=0-"   # default range
+
     if filename:
         # If a filename is provided, set it in the headers using RFC 6266 format
         try:
