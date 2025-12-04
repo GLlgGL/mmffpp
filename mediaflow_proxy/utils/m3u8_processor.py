@@ -111,6 +111,22 @@ class M3U8Processor:
 
             # Process complete lines
             lines = buffer.split("\n")
+        # ----- FIX VK HLS WRONG SEGMENT PATH -----
+        # VK manifests have incorrect base URLs (video.m3u8 != segment path)
+            if "okcdn.ru" in base_url:
+            # Try to extract segment base path from playlist content
+                vk_base = None
+
+            # Pattern example:
+            # https://vkvd591.okcdn.ru/expires/.../video/
+                m = re.search(r'(https://[^\s"]+/video/)', content)
+            if m:
+                vk_base = m.group(1)
+
+            if vk_base:
+                base_url = vk_base
+
+            
             if len(lines) > 1:
                 # Process all complete lines except the last one
                 for line in lines[:-1]:
