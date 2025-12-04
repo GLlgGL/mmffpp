@@ -300,6 +300,18 @@ async def hls_manifest_proxy(
     # Sanitize destination URL to fix common encoding issues
     original_destination = hls_params.destination
     hls_params.destination = sanitize_url(hls_params.destination)
+
+    # ---------------- VK FIX: Prevent infinite playlist recursion ----------------
+# VK sometimes returns "directories" like .../video/ which are NOT .m3u8 files.
+# If the URL does not contain .m3u8, treat it as a raw URL (NOT a playlist).
+    if ".m3u8" not in hls_params.destination:
+        return await proxy_stream(
+        request.method,
+        hls_params.destination,
+        proxy_headers
+    )
+# ---------------------------------------------------------------------------
+
     
     # Check if this is a retry after 403 error (dlhd_retry parameter)
     force_refresh = request.query_params.get("dlhd_retry") == "1"
