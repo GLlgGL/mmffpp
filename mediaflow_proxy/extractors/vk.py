@@ -11,6 +11,11 @@ UA = (
 
 class VKExtractor(BaseExtractor):
 
+    def __init__(self, request_headers: dict):
+        super().__init__(request_headers)
+        # Default to HLS proxy endpoint, will be updated based on stream type
+        self.mediaflow_endpoint = "mpd_manifest_proxy"
+
     async def extract(self, url: str, **kwargs) -> Dict[str, Any]:
         embed_url = self._normalize(url)
         ajax_url  = self._build_ajax_url(embed_url)
