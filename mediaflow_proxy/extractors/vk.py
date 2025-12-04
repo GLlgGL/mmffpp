@@ -12,6 +12,11 @@ UA = (
 
 class VKExtractor(BaseExtractor):
 
+     def __init__(self, request_headers: dict):
+        super().__init__(request_headers)
+        # if your base doesn’t set this, keep it; otherwise you can remove:
+        self.mediaflow_endpoint = "proxy_stream_endpoint"
+
     async def extract(self, url: str, **kwargs) -> Dict[str, Any]:
         embed_url = self._normalize(url)
         ajax_url = self._build_ajax_url(embed_url)
