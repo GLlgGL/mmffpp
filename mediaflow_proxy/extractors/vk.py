@@ -50,7 +50,7 @@ class VKExtractor(BaseExtractor):
         return {
             "destination_url": mp4,
             "request_headers": headers,
-            "mediaflow_endpoint": "proxy_stream_endpoint",   # always MP4
+            "mediaflow_endpoint": self.mediaflow_endpoint,
         }
 
     # -------------------------------------------------------------------
