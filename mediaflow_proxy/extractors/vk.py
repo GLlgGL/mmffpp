@@ -135,9 +135,7 @@ class VKExtractor(BaseExtractor):
         if not params:
             return None
 
-        # Prefer HLS
-        if params.get("hls"):
-            return params["hls"]
+       
 
         # Then DASH (MPD)
         if params.get("dash"):
