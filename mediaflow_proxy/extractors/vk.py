@@ -59,7 +59,7 @@ class VKExtractor(BaseExtractor):
             endpoint = "mpd_manifest_proxy"
         else:
     # Probably MP4 or another direct media file
-            endpoint = "direct"
+            endpoint = "proxy_stream_endpoint"
 
         return {
             "destination_url": stream,
