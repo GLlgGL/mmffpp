@@ -44,7 +44,7 @@ class VKExtractor(BaseExtractor):
         if mpd:
             # This goes to MediaFlow's DASH→HLS converter
             return {
-                "destination_url": mpd + "&bytes=0-",
+                "destination_url": mpd + "&bytes=0-11811",
                 "request_headers": headers,
                 "mediaflow_endpoint": "mpd_manifest_proxy",
             }
@@ -53,7 +53,7 @@ class VKExtractor(BaseExtractor):
         mp4 = self._extract_mp4(js)
         if mp4:
             return {
-                "destination_url": mp4 + "&bytes=0-",
+                "destination_url": mp4 + "&bytes=0-11811",
                 "request_headers": headers,
                 "mediaflow_endpoint": "proxy_stream_endpoint",
             }
