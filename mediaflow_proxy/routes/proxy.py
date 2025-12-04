@@ -300,18 +300,6 @@ async def hls_manifest_proxy(
     # Sanitize destination URL to fix common encoding issues
     original_destination = hls_params.destination
     hls_params.destination = sanitize_url(hls_params.destination)
-
-    # ---------------- VK FIX: Prevent infinite playlist recursion ----------------
-# VK sometimes returns "directories" like .../video/ which are NOT .m3u8 files.
-# If the URL does not contain .m3u8, treat it as a raw URL (NOT a playlist).
-    if ".m3u8" not in hls_params.destination:
-        return await proxy_stream(
-        request.method,
-        hls_params.destination,
-        proxy_headers
-    )
-# ---------------------------------------------------------------------------
-
     
     # Check if this is a retry after 403 error (dlhd_retry parameter)
     force_refresh = request.query_params.get("dlhd_retry") == "1"
@@ -611,75 +599,53 @@ async def dash_segment_proxy(
 async def proxy_stream_endpoint(
     request: Request,
     proxy_headers: Annotated[ProxyRequestHeaders, Depends(get_proxy_headers)],
-    destination: str = Query(..., description="URL of the stream.", alias="d"),
+    destination: str = Query(..., description="The URL of the stream.", alias="d"),
     filename: str | None = None,
 ):
     """
-    Proxy direct MP4/TS streams reliably (VK/OK.ru friendly).
-    Fixes:
-    - OK.ru HEAD rejection
-    - OK.ru missing Range header
-    - Broken bytes= querystring from Stremio
-    - Blank h_range / h_if-range headers
-    - Stremio timeouts on MP4
+    Proxify stream requests to the given video URL.
+
+    Args:
+        request (Request): The incoming HTTP request.
+        proxy_headers (ProxyRequestHeaders): The headers to include in the request.
+        destination (str): The URL of the stream to be proxied.
+        filename (str | None): The filename to be used in the response headers.
+
+    Returns:
+        Response: The HTTP response with the streamed content.
     """
-    logger = logging.getLogger(__name__)
-
-    # -----------------------------
-    # 1. Sanitize destination URL
-    # -----------------------------
+    # Sanitize destination URL to fix common encoding issues
     destination = sanitize_url(destination)
-
-    # -----------------------------
-    # 2. Remove ?bytes=123-456 added by Stremio
-    #    OK.ru rejects this and stalls
-    # -----------------------------
-    destination = re.sub(r"[&?]bytes=\d+-\d+", "", destination)
-
-    # -----------------------------
-    # 3. Extract DLHD if needed
-    # -----------------------------
+    
+    # Check if destination contains DLHD pattern and extract stream directly
     dlhd_result = await _check_and_extract_dlhd_stream(request, destination, proxy_headers)
     if dlhd_result:
+        # Update destination and headers with extracted stream data
         destination = dlhd_result["destination_url"]
         proxy_headers.request.update(dlhd_result.get("request_headers", {}))
+    if proxy_headers.request.get("range", "").strip() == "":
+        proxy_headers.request.pop("range", None)
 
-    # -----------------------------
-    # 4. Remove empty Range / If-Range headers BEFORE proxying
-    # -----------------------------
-    for h in ("range", "if-range"):
-        if proxy_headers.request.get(h, "").strip() == "":
-            proxy_headers.request.pop(h, None)
-
-    # -----------------------------
-    # 5. If no Range header, force a correct one
-    # -----------------------------
+    if proxy_headers.request.get("if-range", "").strip() == "":
+        proxy_headers.request.pop("if-range", None)
+    
     if "range" not in proxy_headers.request:
         proxy_headers.request["range"] = "bytes=0-"
-
-    # -----------------------------
-    # 6. Fix HEAD → GET for OK.ru
-    # OK.ru will not answer HEAD requests for MP4.
-    # Stremio always tests with HEAD first → must convert.
-    # -----------------------------
-    method = "GET" if request.method == "HEAD" else request.method
-
-    # -----------------------------
-    # 7. Optional filename attachment
-    # -----------------------------
+    
     if filename:
+        # If a filename is provided, set it in the headers using RFC 6266 format
         try:
+            # Try to encode with latin-1 first (simple case)
             filename.encode("latin-1")
             content_disposition = f'attachment; filename="{filename}"'
         except UnicodeEncodeError:
+            # For filenames with non-latin-1 characters, use RFC 6266 format with UTF-8
             encoded_filename = quote(filename.encode("utf-8"))
             content_disposition = f"attachment; filename*=UTF-8''{encoded_filename}"
+
         proxy_headers.response.update({"content-disposition": content_disposition})
 
-    # -----------------------------
-    # 8. Proxy the stream
-    # -----------------------------
-    return await proxy_stream(method, destination, proxy_headers)
+    return await proxy_stream(request.method, destination, proxy_headers)
 
 
 @proxy_router.get("/mpd/manifest.m3u8")
