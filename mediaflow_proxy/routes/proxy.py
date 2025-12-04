@@ -623,14 +623,34 @@ async def proxy_stream_endpoint(
         # Update destination and headers with extracted stream data
         destination = dlhd_result["destination_url"]
         proxy_headers.request.update(dlhd_result.get("request_headers", {}))
-    if proxy_headers.request.get("range", "").strip() == "":
-        proxy_headers.request.pop("range", None)
+    # Handle MP4 full-file playback
+    range_header = request.headers.get("range")
 
-    if proxy_headers.request.get("if-range", "").strip() == "":
-        proxy_headers.request.pop("if-range", None)
-    
-    if "range" not in proxy_headers.request:
-        proxy_headers.request["range"] = "bytes=0-"
+    async with create_httpx_client(
+    headers=proxy_headers.request,
+    follow_redirects=True,
+    ) as client:
+
+    # Case 1: No Range header → return full mp4 (200 OK)
+        if not range_header:
+            resp = await client.get(destination)
+            if resp.status_code >= 400:
+                raise HTTPException(resp.status_code, f"Origin error: {resp.status_code}")
+
+        return Response(
+            content=resp.content,
+            media_type="video/mp4",
+            headers={
+                "Content-Length": resp.headers.get("Content-Length", "0"),
+                "Accept-Ranges": "bytes",
+                "Cache-Control": "no-store",
+            },
+            status_code=200,
+        )
+
+    # Case 2: Normal range request → pass through
+    proxy_headers.request["Range"] = range_header
+
     
     if filename:
         # If a filename is provided, set it in the headers using RFC 6266 format
