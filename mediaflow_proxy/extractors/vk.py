@@ -67,6 +67,9 @@ class VKExtractor(BaseExtractor):
         if not self._is_valid_mpd_url(mpd):
             raise ExtractorError("VK: MPD URL is invalid (full-file detected)")
 
+
+        headers = self.base_headers.copy()
+        headers["referer"] = url
         # Send MPD to MediaFlow DASH → HLS converter
         return {
             "destination_url": mpd,
