@@ -13,6 +13,11 @@ UA = (
 
 class VKExtractor(BaseExtractor):
 
+    def __init__(self, request_headers: dict):
+        super().__init__(request_headers)
+        # Default to HLS proxy endpoint, will be updated based on stream type
+        self.mediaflow_endpoint = "mpd_manifest_proxy"
+
     async def extract(self, url: str, **kwargs) -> Dict[str, Any]:
         """
         VK extractor that returns ONLY DASH MPD links.
