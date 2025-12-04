@@ -11,19 +11,10 @@ UA = (
 
 
 class VKExtractor(BaseExtractor):
-    """
-    Improved VK extractor with:
-    - HLS priority (MUCH more stable for Stremio)
-    - MP4 fallback only if HLS missing
-    - Correct MediaFlow endpoint selection
-    - Handles new VK JSON payload structure
-    """
 
     async def extract(self, url: str, **kwargs) -> Dict[str, Any]:
         embed_url = self._normalize(url)
-
-        # Step 1: Build al_video.php endpoint
-        ajax_url = self._build_ajax_url(embed_url)
+        ajax_url  = self._build_ajax_url(embed_url)
 
         headers = {
             "User-Agent": UA,
@@ -35,34 +26,40 @@ class VKExtractor(BaseExtractor):
 
         data = self._build_ajax_data(embed_url)
 
-        # POST request to VK
         response = await self._make_request(
-            ajax_url,
-            method="POST",
-            data=data,
-            headers=headers
+            ajax_url, method="POST", data=data, headers=headers
         )
 
-        text = response.text
-        if text.startswith("<!--"):
-            text = text[4:]
+        text = response.text.lstrip("<!--")
 
         try:
             json_data = json.loads(text)
-        except Exception:
-            raise ExtractorError("VK: failed to parse JSON payload")
+        except:
+            raise ExtractorError("VK: invalid JSON payload")
 
         stream = self._extract_stream(json_data)
         if not stream:
             raise ExtractorError("VK: no playable stream found")
 
-        # AUTO-DETECT STREAM TYPE
-        if ".m3u8" in stream:
+        # ------------------------------------------------------
+        # FIXED STREAM TYPE DETECTION
+        # ------------------------------------------------------
+
+        # HLS always ends with:  /video.m3u8?....
+        is_hls = "video.m3u8" in stream
+
+        # MPD never ends with .mpd → detect by MPD parameters
+        is_mpd = (
+            "cmd=videoPlayerCdn" in stream
+            or "clientType=" in stream and "id=" in stream
+        )
+
+        if is_hls:
             endpoint = "hls_manifest_proxy"
-        elif ".mpd" in stream:
+        elif is_mpd:
             endpoint = "mpd_manifest_proxy"
         else:
-            # Direct MP4 (VK type=3) → must use /proxy/stream
+            # direct mp4 fallback
             endpoint = "proxy_stream_endpoint"
 
         return {
@@ -71,57 +68,36 @@ class VKExtractor(BaseExtractor):
             "mediaflow_endpoint": endpoint,
         }
 
-    # ---------------------------------------------------------------------
-    # HELPERS
-    # ---------------------------------------------------------------------
+    # --------------------------------------------
+    # Helpers
+    # --------------------------------------------
 
     def _normalize(self, url: str) -> str:
-        """Turn vk.com/videoXXXX_YYYY into vk.com/video_ext.php?oid=...&id=..."""
         if "video_ext.php" in url:
             return url
-
         m = re.search(r"video(-?\d+)_(\d+)", url)
         if not m:
             return url
-
-        oid, vid = m.group(1), m.group(2)
-        return f"https://vk.com/video_ext.php?oid={oid}&id={vid}"
+        return f"https://vk.com/video_ext.php?oid={m.group(1)}&id={m.group(2)}"
 
     def _build_ajax_url(self, embed_url: str) -> str:
         host = re.search(r"https?://([^/]+)", embed_url).group(1)
         return f"https://{host}/al_video.php?act=show"
 
-    def _build_ajax_data(self, embed_url: str) -> Dict[str, str]:
+    def _build_ajax_data(self, embed_url: str):
         qs = re.search(r"\?(.*)", embed_url)
-        parts = (
-            dict(x.split("=") for x in qs.group(1).split("&"))
-            if qs
-            else {}
-        )
-        oid = parts.get("oid")
-        vid = parts.get("id")
-
-        if not oid or not vid:
-            raise ExtractorError("VK: cannot extract oid/id from URL")
-
+        parts = dict(x.split("=") for x in qs.group(1).split("&")) if qs else {}
         return {
             "act": "show",
             "al": "1",
-            "video": f"{oid}_{vid}",
+            "video": f"{parts.get('oid')}_{parts.get('id')}",
         }
 
     def _extract_stream(self, json_data: Any) -> str | None:
-        """
-        Extracts the best stream following this order:
-
-        1. HLS (MUCH more stable for Stremio)
-        2. MP4 1080/720/480/360
-        """
-
         payload = []
-        for item in json_data.get("payload", []):
-            if isinstance(item, list):
-                payload = item
+        for i in json_data.get("payload", []):
+            if isinstance(i, list):
+                payload = i
 
         params = None
         for item in payload:
@@ -133,11 +109,15 @@ class VKExtractor(BaseExtractor):
         if not params:
             return None
 
-        # Prefer HLS -> Stremio stable
+        # HLS first
         if params.get("hls"):
             return params["hls"]
 
-        # Then fallback to direct MP4
+        # videoPlayerCdn → MPD type
+        if params.get("dash"):
+            return params["dash"]
+
+        # MP4 fallback
         return (
             params.get("url1080")
             or params.get("url720")
