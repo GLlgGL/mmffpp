@@ -1,8 +1,9 @@
 import json
 import re
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 from mediaflow_proxy.extractors.base import BaseExtractor, ExtractorError
+
 
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -13,8 +14,14 @@ UA = (
 class VKExtractor(BaseExtractor):
 
     async def extract(self, url: str, **kwargs) -> Dict[str, Any]:
+        """
+        VK extractor that returns ONLY DASH MPD links.
+        Never returns MP4.
+        Never returns full-file type=1/type=3 URLs.
+        """
+
         embed_url = self._normalize(url)
-        ajax_url  = self._build_ajax_url(embed_url)
+        ajax_url = self._build_ajax_url(embed_url)
 
         headers = {
             "User-Agent": UA,
@@ -27,6 +34,7 @@ class VKExtractor(BaseExtractor):
 
         data = self._build_ajax_data(embed_url)
 
+        # Request data
         response = await self._make_request(
             ajax_url, method="POST", data=data, headers=headers
         )
@@ -38,33 +46,32 @@ class VKExtractor(BaseExtractor):
         except:
             raise ExtractorError("VK: invalid JSON payload")
 
-        # -------------------------------
-        # 1) Prefer DASH MPD ALWAYS
-        # -------------------------------
+        # ---------------------------------------------------
+        # DASH MPD extraction (ONLY allowed output)
+        # ---------------------------------------------------
         mpd = self._extract_mpd(js)
-        if mpd:
-            return {
-                "destination_url": mpd,             # NO bytes here!
-                "request_headers": headers,
-                "mediaflow_endpoint": "mpd_manifest_proxy",
-            }
+        if not mpd:
+            raise ExtractorError("VK: No DASH MPD found")
 
-        # -------------------------------
-        # 2) Fallback to MP4
-        # -------------------------------
-        mp4 = self._extract_mp4(js)
-        if mp4:
-            return {
-                "destination_url": mp4,             # Stremio will send range requests
-                "request_headers": headers,
-                "mediaflow_endpoint": "proxy_stream_endpoint",
-            }
+        # ---------------------------------------------------
+        # VK MPD returns base URL without `bytes=`
+        # We do NOT append bytes. MediaFlow MPD/HLS pipeline handles it.
+        # ---------------------------------------------------
 
-        raise ExtractorError("VK: no MPD or MP4 stream found")
+        # MUST ensure this is not the full-file URL
+        if not self._is_valid_mpd_url(mpd):
+            raise ExtractorError("VK: MPD URL is invalid (full-file detected)")
 
-    # ----------------------------------------------------------------------
+        # Send MPD to MediaFlow DASH → HLS converter
+        return {
+            "destination_url": mpd,
+            "request_headers": headers,
+            "mediaflow_endpoint": "mpd_manifest_proxy",
+        }
+
+    # =====================================================================
     # Helpers
-    # ----------------------------------------------------------------------
+    # =====================================================================
 
     def _normalize(self, url: str) -> str:
         if "video_ext.php" in url:
@@ -87,11 +94,11 @@ class VKExtractor(BaseExtractor):
             "video": f"{parts.get('oid')}_{parts.get('id')}",
         }
 
-    # ----------------------------------------------------------------------
-    # DASH MPD extractor (MAIN)
-    # ----------------------------------------------------------------------
+    # =====================================================================
+    # DASH MPD extraction
+    # =====================================================================
 
-    def _extract_mpd(self, js: Any) -> Optional[str]:
+    def _extract_mpd(self, js: Any) -> str | None:
         payload = []
         for item in js.get("payload", []):
             if isinstance(item, list):
@@ -103,73 +110,44 @@ class VKExtractor(BaseExtractor):
 
             player = item.get("player", {})
 
-            # Option 1: new VK format
+            # Type 1: direct MPD
             mpd = player.get("dash_manifest")
             if mpd:
                 return mpd
 
-            # Option 2: older cached structure
-            cache = player.get("cache", {})
-            mpd2 = cache.get("data", {}).get("dash")
+            # Type 2: cached MPD
+            mpd2 = player.get("cache", {}).get("data", {}).get("dash")
             if mpd2:
                 return mpd2
 
-            # Option 3: params list
-            params = player.get("params")
-            if isinstance(params, list) and params:
-                p = params[0]
-                if "dash" in p:
-                    return p["dash"]
-
         return None
 
-    # ----------------------------------------------------------------------
-    # MP4 fallback (Kodi ResolveURL compatible)
-    # ----------------------------------------------------------------------
+    # =====================================================================
+    # Validate that MPD URL is NOT full-file MP4 URL
+    # =====================================================================
 
-    def _extract_mp4(self, js: Any) -> Optional[str]:
-        payload = []
-        for it in js.get("payload", []):
-            if isinstance(it, list):
-                payload = it
+    def _is_valid_mpd_url(self, url: str) -> bool:
+        """
+        VK full-file URLs contain:
+        - no bytes=
+        - fromCache=1
+        - ch=
+        - appId=
+        - ct=0 or ct=6
+        """
 
-        params = None
-        cache  = None
+        # MPD should NEVER contain these fields
+        forbidden = [
+            "fromCache=1",
+            "ch=",
+            "appId=",
+            "ct=0",
+            "ct=6",
+            "type=1",  # full-file video
+            "type=3",  # full-file HD
+        ]
 
-        for item in payload:
-            if not isinstance(item, dict):
-                continue
+        if any(f in url for f in forbidden):
+            return False
 
-            player = item.get("player", {})
-
-            # Cached MP4 (best)
-            cache = (
-                player.get("cache", {})
-                .get("data", {})
-                .get("progressive")
-            )
-
-            # Params list
-            p = player.get("params")
-            if isinstance(p, list) and p:
-                params = p[0]
-
-        # Best quality
-        if cache:
-            return (
-                cache.get("url1080") or
-                cache.get("url720") or
-                cache.get("url480") or
-                cache.get("url360")
-            )
-
-        # Fallback
-        if params:
-            return (
-                params.get("url1080") or
-                params.get("url720") or
-                params.get("url480") or
-                params.get("url360")
-            )
-
-        return None
+        return True
