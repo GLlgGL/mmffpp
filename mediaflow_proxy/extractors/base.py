@@ -79,22 +79,31 @@ class BaseExtractor(ABC):
                     )
 
                     if raise_on_status:
+    # allow 3xx (redirects) for extractors—VK needs 302!
+                        if 200 <= response.status_code < 300:
+                            return response
+
+    # 3xx → treat as success, DO NOT ERROR
+                        if 300 <= response.status_code < 400:
+                            return response
+
+    # 4xx/5xx → still error
+                        body_preview = ""
                         try:
-                            response.raise_for_status()
-                        except httpx.HTTPStatusError as e:
-                            # Provide a short body preview for debugging
-                            body_preview = ""
-                            try:
-                                body_preview = e.response.text[:500]
-                            except Exception:
-                                body_preview = "<unreadable body>"
-                            logger.debug(
-                                "HTTPStatusError for %s (status=%s) -- body preview: %s",
-                                url,
-                                e.response.status_code,
-                                body_preview,
-                            )
-                            raise DownloadError(e.response.status_code, f"HTTP error {e.response.status_code} while requesting {url}")
+                            body_preview = response.text[:500]
+                        except Exception:
+                            body_preview = "<unreadable body>"
+
+                        logger.debug(
+                            "HTTP error for %s (status=%s) -- body preview: %s",
+                            url,
+                            response.status_code,
+                            body_preview,
+                        )
+                        raise DownloadError(
+                            response.status_code,
+                            f"HTTP error {response.status_code} while requesting {url}",
+                        )
                     return response
 
             except DownloadError:
