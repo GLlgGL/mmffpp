@@ -9,17 +9,11 @@ UA = (
     "(KHTML, like Gecko) Chrome/129.0 Safari/537.36"
 )
 
-
 class VKExtractor(BaseExtractor):
-
-     def __init__(self, request_headers: dict):
-        super().__init__(request_headers)
-        # if your base doesn’t set this, keep it; otherwise you can remove:
-        self.mediaflow_endpoint = "proxy_stream_endpoint"
 
     async def extract(self, url: str, **kwargs) -> Dict[str, Any]:
         embed_url = self._normalize(url)
-        ajax_url = self._build_ajax_url(embed_url)
+        ajax_url  = self._build_ajax_url(embed_url)
 
         headers = {
             "User-Agent": UA,
@@ -42,27 +36,26 @@ class VKExtractor(BaseExtractor):
         except:
             raise ExtractorError("VK: invalid JSON payload")
 
-        # ---- Only MP4 ----
-        mp4 = self._extract_mp4(json_data)
-        if not mp4:
-            raise ExtractorError("VK: no mp4 stream found")
+        dash_url = self._extract_mpd(json_data)
+        if not dash_url:
+            raise ExtractorError("VK: no DASH MPD URL found")
 
         return {
-            "destination_url": mp4,
+            "destination_url": dash_url,
             "request_headers": headers,
-            "mediaflow_endpoint": self.mediaflow_endpoint,
+            "mediaflow_endpoint": "mpd_manifest_proxy",
         }
 
-    # -------------------------------------------------------------------
+    # ------------------------------------
+    # Helpers
+    # ------------------------------------
 
     def _normalize(self, url: str) -> str:
         if "video_ext.php" in url:
             return url
-
         m = re.search(r"video(-?\d+)_(\d+)", url)
         if not m:
             return url
-
         return f"https://vk.com/video_ext.php?oid={m.group(1)}&id={m.group(2)}"
 
     def _build_ajax_url(self, embed_url: str) -> str:
@@ -72,62 +65,34 @@ class VKExtractor(BaseExtractor):
     def _build_ajax_data(self, embed_url: str):
         qs = re.search(r"\?(.*)", embed_url)
         parts = dict(x.split("=") for x in qs.group(1).split("&")) if qs else {}
-
         return {
             "act": "show",
             "al": "1",
             "video": f"{parts.get('oid')}_{parts.get('id')}",
         }
 
-    # -------------------------------------------------------------------
-
-    def _extract_mp4(self, json_data: Any) -> str | None:
-        """Extract MP4 (progressive or legacy). Always returns MP4 only."""
+    def _extract_mpd(self, json_data: Any) -> str | None:
+        """Extract DASH MPD URL (hls / hls_ondemand replaced by DASH now)."""
 
         payload = []
         for i in json_data.get("payload", []):
             if isinstance(i, list):
                 payload = i
 
-        params = None
-        cache = None
-
         for item in payload:
-            if not isinstance(item, dict):
-                continue
+            if isinstance(item, dict) and "player" in item:
+                params = item["player"].get("params", [{}])[0]
 
-            player = item.get("player")
-            if not player:
-                continue
+                # MPD URL is usually here
+                dash_urls = [
+                    params.get("dash"),
+                    params.get("dash_live"),
+                    params.get("manifest"),
+                    params.get("manifest_url"),
+                ]
 
-            # NEW progressive mp4
-            cache = (
-                player.get("cache", {})
-                      .get("data", {})
-                      .get("progressive")
-            )
-
-            # fallback mp4 params
-            p = player.get("params")
-            if isinstance(p, list) and p:
-                params = p[0]
-
-        # 1) Progressive MP4 (best)
-        if cache:
-            return (
-                cache.get("url1080")
-                or cache.get("url720")
-                or cache.get("url480")
-                or cache.get("url360")
-            )
-
-        # 2) Old-style MP4 params
-        if params:
-            return (
-                params.get("url1080")
-                or params.get("url720")
-                or params.get("url480")
-                or params.get("url360")
-            )
+                for d in dash_urls:
+                    if d:
+                        return d
 
         return None
