@@ -50,15 +50,23 @@ class VKExtractor(BaseExtractor):
 
         stream = self._extract_stream(json_data)
         if not stream:
-            raise ExtractorError("VK: no playable HLS URL found")
+            raise ExtractorError("VK: no playable stream found")
 
-        playlist_url = stream
+# Dynamically detect stream type
+        if ".m3u8" in stream:
+            endpoint = "hls_manifest_proxy"
+        elif ".mpd" in stream:
+            endpoint = "mpd_manifest_proxy"
+        else:
+    # Probably MP4 or another direct media file
+            endpoint = "direct"
 
         return {
-            "destination_url": playlist_url,
+            "destination_url": stream,
             "request_headers": headers,
-            "mediaflow_endpoint": self.mediaflow_endpoint,
+            "mediaflow_endpoint": endpoint,
         }
+
 
     # -------------------------------
     # HELPERS
