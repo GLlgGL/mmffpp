@@ -1,6 +1,6 @@
 import json
 import re
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from mediaflow_proxy.extractors.base import BaseExtractor, ExtractorError
 
@@ -14,7 +14,7 @@ class VKExtractor(BaseExtractor):
 
     async def extract(self, url: str, **kwargs) -> Dict[str, Any]:
         embed_url = self._normalize(url)
-        ajax_url = self._build_ajax_url(embed_url)
+        ajax_url  = self._build_ajax_url(embed_url)
 
         headers = {
             "User-Agent": UA,
@@ -22,7 +22,7 @@ class VKExtractor(BaseExtractor):
             "Origin": "https://vkvideo.ru",
             "Cookie": "remixlang=0",
             "X-Requested-With": "XMLHttpRequest",
-            "Accept-Encoding": "gzip, deflate"
+            "Accept-Encoding": "gzip, deflate, br",
         }
 
         data = self._build_ajax_data(embed_url)
@@ -38,30 +38,32 @@ class VKExtractor(BaseExtractor):
         except:
             raise ExtractorError("VK: invalid JSON payload")
 
-        # FIRST priority → DASH MPD URL
+        # -------------------------------
+        # 1) Prefer DASH MPD ALWAYS
+        # -------------------------------
         mpd = self._extract_mpd(js)
-
         if mpd:
-            # This goes to MediaFlow's DASH→HLS converter
             return {
-                "destination_url": mpd + "&bytes=0-11811",
+                "destination_url": mpd,             # NO bytes here!
                 "request_headers": headers,
                 "mediaflow_endpoint": "mpd_manifest_proxy",
             }
 
-        # SECOND priority → MP4 fallback (works like Kodi ResolveURL)
+        # -------------------------------
+        # 2) Fallback to MP4
+        # -------------------------------
         mp4 = self._extract_mp4(js)
         if mp4:
             return {
-                "destination_url": mp4 + "&bytes=0-11811",
+                "destination_url": mp4,             # Stremio will send range requests
                 "request_headers": headers,
                 "mediaflow_endpoint": "proxy_stream_endpoint",
             }
 
-        raise ExtractorError("VK: no MPD or MP4 found")
+        raise ExtractorError("VK: no MPD or MP4 stream found")
 
     # ----------------------------------------------------------------------
-    # URL normalizer
+    # Helpers
     # ----------------------------------------------------------------------
 
     def _normalize(self, url: str) -> str:
@@ -86,10 +88,10 @@ class VKExtractor(BaseExtractor):
         }
 
     # ----------------------------------------------------------------------
-    # DASH MPD extractor (MAIN REQUIRED FUNCTION)
+    # DASH MPD extractor (MAIN)
     # ----------------------------------------------------------------------
 
-    def _extract_mpd(self, js: Any) -> str | None:
+    def _extract_mpd(self, js: Any) -> Optional[str]:
         payload = []
         for item in js.get("payload", []):
             if isinstance(item, list):
@@ -101,61 +103,73 @@ class VKExtractor(BaseExtractor):
 
             player = item.get("player", {})
 
-            # 1) DIRECT MPD manifest (most common)
+            # Option 1: new VK format
             mpd = player.get("dash_manifest")
             if mpd:
                 return mpd
 
-            # 2) Cached MPD inside nested structure
+            # Option 2: older cached structure
             cache = player.get("cache", {})
             mpd2 = cache.get("data", {}).get("dash")
             if mpd2:
                 return mpd2
 
+            # Option 3: params list
+            params = player.get("params")
+            if isinstance(params, list) and params:
+                p = params[0]
+                if "dash" in p:
+                    return p["dash"]
+
         return None
 
     # ----------------------------------------------------------------------
-    # MP4 fallback (Kodi-style)
+    # MP4 fallback (Kodi ResolveURL compatible)
     # ----------------------------------------------------------------------
 
-    def _extract_mp4(self, js: Any) -> str | None:
+    def _extract_mp4(self, js: Any) -> Optional[str]:
         payload = []
-        for i in js.get("payload", []):
-            if isinstance(i, list):
-                payload = i
+        for it in js.get("payload", []):
+            if isinstance(it, list):
+                payload = it
 
         params = None
-        cache = None
+        cache  = None
 
         for item in payload:
-            if isinstance(item, dict) and item.get("player"):
-                player = item["player"]
+            if not isinstance(item, dict):
+                continue
 
-                cache = (
-                    player.get("cache", {})
-                    .get("data", {})
-                    .get("progressive")
-                )
+            player = item.get("player", {})
 
-                p = player.get("params")
-                if isinstance(p, list) and p:
-                    params = p[0]
-
-        # Prefer cached MP4
-        if cache:
-            return (
-                cache.get("url1080")
-                or cache.get("url720")
-                or cache.get("url480")
-                or cache.get("url360")
+            # Cached MP4 (best)
+            cache = (
+                player.get("cache", {})
+                .get("data", {})
+                .get("progressive")
             )
 
+            # Params list
+            p = player.get("params")
+            if isinstance(p, list) and p:
+                params = p[0]
+
+        # Best quality
+        if cache:
+            return (
+                cache.get("url1080") or
+                cache.get("url720") or
+                cache.get("url480") or
+                cache.get("url360")
+            )
+
+        # Fallback
         if params:
             return (
-                params.get("url1080")
-                or params.get("url720")
-                or params.get("url480")
-                or params.get("url360")
+                params.get("url1080") or
+                params.get("url720") or
+                params.get("url480") or
+                params.get("url360")
             )
 
         return None
