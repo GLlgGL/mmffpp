@@ -22,6 +22,7 @@ class VKExtractor(BaseExtractor):
             "Origin": "https://vkvideo.ru",
             "Cookie": "remixlang=0",
             "X-Requested-With": "XMLHttpRequest",
+            "Accept-Encoding": "gzip, deflate"
         }
 
         data = self._build_ajax_data(embed_url)
