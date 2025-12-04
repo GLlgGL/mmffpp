@@ -118,5 +118,3 @@ class VKExtractor(BaseExtractor):
         )
 
 )
-
-        )
