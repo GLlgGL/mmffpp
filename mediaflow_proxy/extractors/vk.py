@@ -1,10 +1,8 @@
 import json
 import re
 from typing import Dict, Any
-from urllib.parse import urlparse, parse_qs
 
 from mediaflow_proxy.extractors.base import BaseExtractor, ExtractorError
-
 
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -13,147 +11,150 @@ UA = (
 
 
 class VKExtractor(BaseExtractor):
-    """
-    Correct VK extractor:
-    1. GET video_ext.php WITHOUT FOLLOW REDIRECTS
-    2. If Location → vkuser.net with ?type=1 → DASH MPD
-    3. If Location → login.vk.com → fallback to al_video.php MP4
-    """
-
-    def __init__(self, request_headers: dict):
-        super().__init__(request_headers)
-        self.mediaflow_endpoint = "mpd_manifest_proxy"
 
     async def extract(self, url: str, **kwargs) -> Dict[str, Any]:
-        embed = self._normalize(url)
+        embed_url = self._normalize(url)
+        ajax_url = self._build_ajax_url(embed_url)
 
         headers = {
             "User-Agent": UA,
             "Referer": "https://vkvideo.ru/",
             "Origin": "https://vkvideo.ru",
             "Cookie": "remixlang=0",
+            "X-Requested-With": "XMLHttpRequest",
         }
 
-        # -----------------------------------------------------------
-        # 1) First request: NO REDIRECTS → read Location header
-        # -----------------------------------------------------------
-        resp = await self._make_request(
-            embed,
-            method="GET",
-            headers=headers,
-            follow_redirects=False,  # IMPORTANT
+        data = self._build_ajax_data(embed_url)
+
+        response = await self._make_request(
+            ajax_url, method="POST", data=data, headers=headers
         )
 
-        # --- Case A: Server returned redirect ---
-        if resp.status_code in (301, 302, 303, 307, 308):
-            loc = resp.headers.get("location", "")
+        text = response.text.lstrip("<!--")
 
-            # Login → fallback
-            if "login.vk.com" in loc:
-                return await self._fallback_mp4(embed, headers)
+        try:
+            js = json.loads(text)
+        except:
+            raise ExtractorError("VK: invalid JSON payload")
 
-            # Redirect to MPD XML on vkuser.net
-            if "vkuser.net" in loc:
-                return {
-                    "destination_url": loc,
-                    "request_headers": headers,
-                    "mediaflow_endpoint": "mpd_manifest_proxy",
-                }
+        # FIRST priority → DASH MPD URL
+        mpd = self._extract_mpd(js)
 
-        # --- Case B: Server returned XML directly ---
-        content_type = (resp.headers.get("content-type") or "").lower()
-        text = resp.text or ""
-
-        if "application/dash+xml" in content_type or "<MPD" in text:
+        if mpd:
+            # This goes to MediaFlow's DASH→HLS converter
             return {
-                "destination_url": str(resp.url),
+                "destination_url": mpd,
                 "request_headers": headers,
                 "mediaflow_endpoint": "mpd_manifest_proxy",
             }
 
-        # --- Fallback ---
-        return await self._fallback_mp4(embed, headers)
+        # SECOND priority → MP4 fallback (works like Kodi ResolveURL)
+        mp4 = self._extract_mp4(js)
+        if mp4:
+            return {
+                "destination_url": mp4,
+                "request_headers": headers,
+                "mediaflow_endpoint": "proxy_stream_endpoint",
+            }
 
-    # -----------------------------------------------------------
-    # FALLBACK: old JSON → progressive MP4
-    # -----------------------------------------------------------
-    async def _fallback_mp4(self, embed_url, headers):
-        ajax_url = self._build_ajax_url(embed_url)
-        ajax_data = self._build_ajax_data(embed_url)
+        raise ExtractorError("VK: no MPD or MP4 found")
 
-        resp = await self._make_request(
-            ajax_url,
-            method="POST",
-            data=ajax_data,
-            headers=headers
-        )
+    # ----------------------------------------------------------------------
+    # URL normalizer
+    # ----------------------------------------------------------------------
 
-        text = resp.text.lstrip("<!--")
-        try:
-            js = json.loads(text)
-        except:
-            raise ExtractorError("VK: fallback JSON invalid")
-
-        mp4 = self._extract_progressive_mp4(js)
-        if not mp4:
-            raise ExtractorError("VK: no MP4 found in fallback")
-
-        return {
-            "destination_url": mp4,
-            "request_headers": headers,
-            "mediaflow_endpoint": "proxy_stream_endpoint",
-        }
-
-    # -----------------------------------------------------------
-    # HELPERS
-    # -----------------------------------------------------------
-
-    def _normalize(self, url):
-        parsed = urlparse(url)
-        if "video_ext.php" in parsed.path:
+    def _normalize(self, url: str) -> str:
+        if "video_ext.php" in url:
             return url
-
-        qs = parse_qs(parsed.query)
-        oid = qs.get("oid", [None])[0]
-        vid = qs.get("id", [None])[0]
-        if oid and vid:
-            return f"https://vkvideo.ru/video_ext.php?oid={oid}&id={vid}"
-
         m = re.search(r"video(-?\d+)_(\d+)", url)
-        if m:
-            return f"https://vkvideo.ru/video_ext.php?oid={m.group(1)}&id={m.group(2)}"
+        if not m:
+            return url
+        return f"https://vk.com/video_ext.php?oid={m.group(1)}&id={m.group(2)}"
 
-        return url
-
-    def _build_ajax_url(self, embed_url):
+    def _build_ajax_url(self, embed_url: str) -> str:
         host = re.search(r"https?://([^/]+)", embed_url).group(1)
         return f"https://{host}/al_video.php?act=show"
 
-    def _build_ajax_data(self, embed_url):
-        qs = parse_qs(urlparse(embed_url).query)
-        oid = qs.get("oid", [""])[0]
-        vid = qs.get("id", [""])[0]
-        return {"act": "show", "al": 1, "video": f"{oid}_{vid}"}
+    def _build_ajax_data(self, embed_url: str):
+        qs = re.search(r"\?(.*)", embed_url)
+        parts = dict(x.split("=") for x in qs.group(1).split("&")) if qs else {}
+        return {
+            "act": "show",
+            "al": "1",
+            "video": f"{parts.get('oid')}_{parts.get('id')}",
+        }
 
-    def _extract_progressive_mp4(self, js):
+    # ----------------------------------------------------------------------
+    # DASH MPD extractor (MAIN REQUIRED FUNCTION)
+    # ----------------------------------------------------------------------
+
+    def _extract_mpd(self, js: Any) -> str | None:
         payload = []
         for item in js.get("payload", []):
             if isinstance(item, list):
                 payload = item
 
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+
+            player = item.get("player", {})
+
+            # 1) DIRECT MPD manifest (most common)
+            mpd = player.get("dash_manifest")
+            if mpd:
+                return mpd
+
+            # 2) Cached MPD inside nested structure
+            cache = player.get("cache", {})
+            mpd2 = cache.get("data", {}).get("dash")
+            if mpd2:
+                return mpd2
+
+        return None
+
+    # ----------------------------------------------------------------------
+    # MP4 fallback (Kodi-style)
+    # ----------------------------------------------------------------------
+
+    def _extract_mp4(self, js: Any) -> str | None:
+        payload = []
+        for i in js.get("payload", []):
+            if isinstance(i, list):
+                payload = i
+
         params = None
-        for entry in payload:
-            if isinstance(entry, dict) and entry.get("player"):
-                p = entry["player"]["params"]
+        cache = None
+
+        for item in payload:
+            if isinstance(item, dict) and item.get("player"):
+                player = item["player"]
+
+                cache = (
+                    player.get("cache", {})
+                    .get("data", {})
+                    .get("progressive")
+                )
+
+                p = player.get("params")
                 if isinstance(p, list) and p:
                     params = p[0]
 
-        if not params:
-            return None
+        # Prefer cached MP4
+        if cache:
+            return (
+                cache.get("url1080")
+                or cache.get("url720")
+                or cache.get("url480")
+                or cache.get("url360")
+            )
 
-        return (
-            params.get("url1080")
-            or params.get("url720")
-            or params.get("url480")
-            or params.get("url360")
-        )
+        if params:
+            return (
+                params.get("url1080")
+                or params.get("url720")
+                or params.get("url480")
+                or params.get("url360")
+            )
+
+        return None
