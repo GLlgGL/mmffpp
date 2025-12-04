@@ -9,16 +9,12 @@ UA = (
     "(KHTML, like Gecko) Chrome/129.0 Safari/537.36"
 )
 
-class VKExtractor(BaseExtractor):
 
-    def __init__(self, request_headers: dict):
-        super().__init__(request_headers)
-        # Default to HLS proxy endpoint, will be updated based on stream type
-        self.mediaflow_endpoint = "mpd_manifest_proxy"
+class VKExtractor(BaseExtractor):
 
     async def extract(self, url: str, **kwargs) -> Dict[str, Any]:
         embed_url = self._normalize(url)
-        ajax_url  = self._build_ajax_url(embed_url)
+        ajax_url = self._build_ajax_url(embed_url)
 
         headers = {
             "User-Agent": UA,
@@ -37,23 +33,35 @@ class VKExtractor(BaseExtractor):
         text = response.text.lstrip("<!--")
 
         try:
-            json_data = json.loads(text)
+            js = json.loads(text)
         except:
             raise ExtractorError("VK: invalid JSON payload")
 
-        dash_url = self._extract_mpd(json_data)
-        if not dash_url:
-            raise ExtractorError("VK: no DASH MPD URL found")
+        # FIRST priority → DASH MPD URL
+        mpd = self._extract_mpd(js)
 
-        return {
-            "destination_url": dash_url,
-            "request_headers": headers,
-            "mediaflow_endpoint": "mpd_manifest_proxy",
-        }
+        if mpd:
+            # This goes to MediaFlow's DASH→HLS converter
+            return {
+                "destination_url": mpd,
+                "request_headers": headers,
+                "mediaflow_endpoint": "mpd_manifest_proxy",
+            }
 
-    # ------------------------------------
-    # Helpers
-    # ------------------------------------
+        # SECOND priority → MP4 fallback (works like Kodi ResolveURL)
+        mp4 = self._extract_mp4(js)
+        if mp4:
+            return {
+                "destination_url": mp4,
+                "request_headers": headers,
+                "mediaflow_endpoint": "proxy_stream_endpoint",
+            }
+
+        raise ExtractorError("VK: no MPD or MP4 found")
+
+    # ----------------------------------------------------------------------
+    # URL normalizer
+    # ----------------------------------------------------------------------
 
     def _normalize(self, url: str) -> str:
         if "video_ext.php" in url:
@@ -76,28 +84,77 @@ class VKExtractor(BaseExtractor):
             "video": f"{parts.get('oid')}_{parts.get('id')}",
         }
 
-    def _extract_mpd(self, json_data: Any) -> str | None:
-        """Extract DASH MPD URL (hls / hls_ondemand replaced by DASH now)."""
+    # ----------------------------------------------------------------------
+    # DASH MPD extractor (MAIN REQUIRED FUNCTION)
+    # ----------------------------------------------------------------------
 
+    def _extract_mpd(self, js: Any) -> str | None:
         payload = []
-        for i in json_data.get("payload", []):
+        for item in js.get("payload", []):
+            if isinstance(item, list):
+                payload = item
+
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+
+            player = item.get("player", {})
+
+            # 1) DIRECT MPD manifest (most common)
+            mpd = player.get("dash_manifest")
+            if mpd:
+                return mpd
+
+            # 2) Cached MPD inside nested structure
+            cache = player.get("cache", {})
+            mpd2 = cache.get("data", {}).get("dash")
+            if mpd2:
+                return mpd2
+
+        return None
+
+    # ----------------------------------------------------------------------
+    # MP4 fallback (Kodi-style)
+    # ----------------------------------------------------------------------
+
+    def _extract_mp4(self, js: Any) -> str | None:
+        payload = []
+        for i in js.get("payload", []):
             if isinstance(i, list):
                 payload = i
 
+        params = None
+        cache = None
+
         for item in payload:
-            if isinstance(item, dict) and "player" in item:
-                params = item["player"].get("params", [{}])[0]
+            if isinstance(item, dict) and item.get("player"):
+                player = item["player"]
 
-                # MPD URL is usually here
-                dash_urls = [
-                    params.get("dash"),
-                    params.get("dash_live"),
-                    params.get("manifest"),
-                    params.get("manifest_url"),
-                ]
+                cache = (
+                    player.get("cache", {})
+                    .get("data", {})
+                    .get("progressive")
+                )
 
-                for d in dash_urls:
-                    if d:
-                        return d
+                p = player.get("params")
+                if isinstance(p, list) and p:
+                    params = p[0]
+
+        # Prefer cached MP4
+        if cache:
+            return (
+                cache.get("url1080")
+                or cache.get("url720")
+                or cache.get("url480")
+                or cache.get("url360")
+            )
+
+        if params:
+            return (
+                params.get("url1080")
+                or params.get("url720")
+                or params.get("url480")
+                or params.get("url360")
+            )
 
         return None
