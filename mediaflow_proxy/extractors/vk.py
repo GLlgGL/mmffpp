@@ -26,59 +26,77 @@ class VKExtractor(BaseExtractor):
 
         data = self._build_ajax_data(embed_url)
 
+        # Send POST request
         response = await self._make_request(
             ajax_url, method="POST", data=data, headers=headers
         )
 
+        # Remove VK comment header: <!--{...}
         text = response.text.lstrip("<!--")
 
+        # Parse JSON
         try:
             json_data = json.loads(text)
         except:
             raise ExtractorError("VK: invalid JSON payload")
 
+        # Extract best playable stream
         stream = self._extract_stream(json_data)
         if not stream:
             raise ExtractorError("VK: no playable stream found")
 
-        # ------------------------------------------------------
-        # FIXED STREAM TYPE DETECTION
-        # ------------------------------------------------------
+        # ---------------------------------------------------------------------
+        # CORRECT STREAM TYPE DETECTION
+        # ---------------------------------------------------------------------
+        s = stream.lower()
 
-        # HLS always ends with:  /video.m3u8?....
-        is_hls = "video.m3u8" in stream
+        # ❗ HLS is ALWAYS .m3u8
+        is_hls = ".m3u8" in s
 
-        # MPD never ends with .mpd → detect by MPD parameters
-        is_mpd = (
-            "cmd=videoPlayerCdn" in stream
-            or "clientType=" in stream and "id=" in stream
+        # ❗ DASH (MPD) from VK ALWAYS uses these:
+        #     cmd=videoPlayerCdn
+        #     AND params['dash']
+        is_mpd = ("cmd=videoplayercdn" in s) or ("dash" in s)
+
+        # ❗ Direct MP4 always has bytes= or type= without m3u8/mpd
+        is_mp4 = (
+            ("bytes=" in s)
+            or ("type=" in s and not is_hls and not is_mpd)
         )
 
+        # Select correct MediaFlow endpoint
         if is_hls:
             endpoint = "hls_manifest_proxy"
+
         elif is_mpd:
             endpoint = "mpd_manifest_proxy"
+
         else:
-            # direct mp4 fallback
+            # fallback for direct MP4 or unknown types
             endpoint = "proxy_stream_endpoint"
 
+        # Return extraction result
         return {
             "destination_url": stream,
             "request_headers": headers,
             "mediaflow_endpoint": endpoint,
         }
 
-    # --------------------------------------------
+    # ------------------------------------------------------------------
     # Helpers
-    # --------------------------------------------
+    # ------------------------------------------------------------------
 
     def _normalize(self, url: str) -> str:
+        """Normalize vk.com/video123_456 → video_ext.php version."""
         if "video_ext.php" in url:
             return url
+
         m = re.search(r"video(-?\d+)_(\d+)", url)
         if not m:
             return url
-        return f"https://vk.com/video_ext.php?oid={m.group(1)}&id={m.group(2)}"
+
+        oid, vid = m.group(1), m.group(2)
+        return f"https://vk.com/video_ext.php?oid={oid}&id={vid}"
 
     def _build_ajax_url(self, embed_url: str) -> str:
         host = re.search(r"https?://([^/]+)", embed_url).group(1)
@@ -87,33 +105,41 @@ class VKExtractor(BaseExtractor):
     def _build_ajax_data(self, embed_url: str):
         qs = re.search(r"\?(.*)", embed_url)
         parts = dict(x.split("=") for x in qs.group(1).split("&")) if qs else {}
+        oid = parts.get("oid")
+        vid = parts.get("id")
         return {
             "act": "show",
             "al": "1",
-            "video": f"{parts.get('oid')}_{parts.get('id')}",
+            "video": f"{oid}_{vid}",
         }
 
     def _extract_stream(self, json_data: Any) -> str | None:
+        """
+        Returns:
+            HLS (.m3u8) if available
+            DASH (params["dash"])
+            or MP4 fallback (1080/720/480/360)
+        """
         payload = []
-        for i in json_data.get("payload", []):
-            if isinstance(i, list):
-                payload = i
+        for item in json_data.get("payload", []):
+            if isinstance(item, list):
+                payload = item
 
         params = None
-        for item in payload:
-            if isinstance(item, dict) and item.get("player"):
-                p = item["player"].get("params")
+        for block in payload:
+            if isinstance(block, dict) and block.get("player"):
+                p = block["player"].get("params")
                 if isinstance(p, list) and p:
                     params = p[0]
 
         if not params:
             return None
 
-        # HLS first
+        # Prefer HLS
         if params.get("hls"):
             return params["hls"]
 
-        # videoPlayerCdn → MPD type
+        # Then DASH (MPD)
         if params.get("dash"):
             return params["dash"]
 
