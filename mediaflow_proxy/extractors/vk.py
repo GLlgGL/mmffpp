@@ -72,26 +72,49 @@ class VKExtractor(BaseExtractor):
             "video": f"{parts.get('oid')}_{parts.get('id')}",
         }
 
-    def _extract_mp4(self, json_data: Any) -> str | None:
+        def _extract_mp4(self, json_data: Any) -> str | None:
         payload = []
         for i in json_data.get("payload", []):
             if isinstance(i, list):
                 payload = i
 
+        # find player params
         params = None
+        cache = None
+
         for item in payload:
             if isinstance(item, dict) and item.get("player"):
-                p = item["player"].get("params")
+                player = item["player"]
+
+                # NEW: check for cached progressive mp4
+                cache = (player.get("cache", {})
+                                .get("data", {})
+                                .get("progressive"))
+                
+                p = player.get("params")
                 if isinstance(p, list) and p:
                     params = p[0]
 
-        if not params:
-            return None
+        # -----------------------------
+        # 1) BEST SOURCE: CACHE.PROGRESSIVE
+        # -----------------------------
+        if cache:
+            return (
+                cache.get("url1080") or
+                cache.get("url720") or
+                cache.get("url480") or
+                cache.get("url360")
+            )
 
-        # DIRECT MP4 ONLY — highest quality first
-        return (
-            params.get("url1080")
-            or params.get("url720")
-            or params.get("url480")
-            or params.get("url360")
-        )
+        # -----------------------------
+        # 2) FALLBACK: OLD PARAMS
+        # -----------------------------
+        if params:
+            return (
+                params.get("url1080") or
+                params.get("url720") or
+                params.get("url480") or
+                params.get("url360")
+            )
+
+        return None
